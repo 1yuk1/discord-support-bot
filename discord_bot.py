@@ -48,15 +48,7 @@ RATE_WINDOW = config.RATE_WINDOW
 # НАСТРОЙКА ПРОКСИ И AI КЛИЕНТОВ
 # ==============================================================================
 def get_proxy_url():
-    """Возвращает URL прокси для подключения."""
-    proxy_type = "socks5h"  
-    if PROXY_USERNAME and PROXY_PASSWORD:
-        return f"{proxy_type}://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
-    return f"{proxy_type}://{PROXY_HOST}:{PROXY_PORT}"
-
-
-def get_http_proxy_url():
-    """Возвращает HTTP прокси для Groq API."""
+    """Возвращает HTTP прокси для подключения."""
     if PROXY_USERNAME and PROXY_PASSWORD:
         return f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
     return f"http://{PROXY_HOST}:{PROXY_PORT}"
@@ -66,7 +58,7 @@ def get_http_proxy_url():
 if AI_PROVIDER == "groq":
     print(f"🤖 AI провайдер: Groq (модель: {GROQ_MODEL})")
     if USE_PROXY:
-        proxy_url = get_http_proxy_url()
+        proxy_url = get_proxy_url()
         print(f"🔄 Groq будет использовать прокси: {PROXY_HOST}:{PROXY_PORT}")
         http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
         groq_client = Groq(api_key=GROQ_API_KEY, http_client=http_client)
