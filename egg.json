@@ -1,0 +1,89 @@
+{
+    "_comment": "DO NOT EDIT: DO NOT MANUALLY SET UUID, LET THE PANEL DO IT",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-04-22T00:00:00.000Z",
+    "name": "Discord Support Bot",
+    "author": "1yuk1",
+    "description": "Discord бот поддержки с AI (Groq) и ChromaDB",
+    "features": null,
+    "docker_images": {
+        "ghcr.io/1yuk1/discord-support-bot:latest": "ghcr.io/1yuk1/discord-support-bot:latest"
+    },
+    "file_denylist": [],
+    "file_denylist_enabled": false,
+    "startup": "/entrypoint.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\r\n    \"done\": \"Бот запущен\",\r\n    \"userInteraction\": []\r\n}",
+        "logs": "{\r\n    \"custom\": false,\r\n    \"location\": \"logs/latest.log\"\r\n}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/1yuk1/discord-support-bot:latest",
+            "entrypoint": "bash",
+            "script": "#!/bin/bash\n# No installation needed - all deps in container\necho \"Using pre-built Docker image\"\n"
+        }
+    },
+    "variables": [
+        {
+            "name": "Discord Token",
+            "description": "Токен Discord бота",
+            "env_variable": "DISCORD_TOKEN",
+            "default_value": "",
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Groq API Key",
+            "description": "API ключ Groq",
+            "env_variable": "GROQ_API_KEY",
+            "default_value": "",
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Ticket Category ID",
+            "description": "ID категории для тикетов",
+            "env_variable": "TICKET_CATEGORY_ID",
+            "default_value": "",
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Bot Role ID",
+            "description": "ID роли бота",
+            "env_variable": "BOT_ROLE_ID",
+            "default_value": "",
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Use Proxy",
+            "description": "Использовать прокси",
+            "env_variable": "USE_PROXY",
+            "default_value": "false",
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Host",
+            "description": "Хост прокси",
+            "env_variable": "PROXY_HOST",
+            "default_value": "127.0.0.1",
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Port",
+            "description": "Порт прокси",
+            "env_variable": "PROXY_PORT",
+            "default_value": "10808",
+            "rules": "string",
+            "field_type": "text"
+        }
+    ]
+}
