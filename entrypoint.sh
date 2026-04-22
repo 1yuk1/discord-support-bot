@@ -3,6 +3,10 @@ set -e
 
 cd /home/container
 
+# Huggingface cache
+export HF_HOME=/home/container/model_cache
+export TRANSFORMERS_CACHE=/home/container/model_cache
+
 if [ ! -f "discord_bot.py" ]; then
     echo "📦 Скачивание кода бота из GitHub..."
     git clone --depth 1 https://github.com/1yuk1/discord-support-bot.git .

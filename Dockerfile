@@ -4,6 +4,8 @@ WORKDIR /home/container
 
 ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
 ENV USER=root
+ENV HF_HOME=/home/container/model_cache
+ENV TRANSFORMERS_CACHE=/home/container/model_cache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
