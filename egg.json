@@ -17,15 +17,15 @@
     "startup": "/entrypoint.sh",
     "config": {
         "files": "{}",
-        "startup": "{\r\n    \"done\": \"Бот запущен\",\r\n    \"userInteraction\": []\r\n}",
-        "logs": "{\r\n    \"custom\": false,\r\n    \"location\": \"logs/latest.log\"\r\n}",
+        "startup": "{\"done\":\"Бот запущен\",\"userInteraction\":[]}",
+        "logs": "{\"custom\":false,\"location\":\"logs/latest.log\"}",
         "stop": "^C"
     },
     "scripts": {
         "installation": {
             "container": "ghcr.io/1yuk1/discord-support-bot:latest",
             "entrypoint": "bash",
-            "script": "#!/bin/bash\n# No installation needed - all deps in container\necho \"Using pre-built Docker image\"\n"
+            "script": "#!/bin/bash\necho \"Using pre-built Docker image\"\n"
         }
     },
     "variables": [
@@ -63,7 +63,7 @@
         },
         {
             "name": "Use Proxy",
-            "description": "Использовать прокси",
+            "description": "Использовать прокси (true/false)",
             "env_variable": "USE_PROXY",
             "default_value": "false",
             "rules": "string",
