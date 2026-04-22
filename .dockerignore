@@ -8,6 +8,5 @@ chroma_db/
 .env
 *.tom
 Dockerfile
-entrypoint.sh
 *.md
 *.zip
