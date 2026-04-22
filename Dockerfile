@@ -4,6 +4,7 @@ WORKDIR /app
 
 ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
 ENV USER=root
+ENV APP_BASE_DIR=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
