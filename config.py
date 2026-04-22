@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-BASE_DIR = Path(os.environ.get("APP_BASE_DIR", Path(__file__).resolve().parent))
+BASE_DIR = Path(os.environ.get("APP_BASE_DIR", os.getcwd()))
 SETTINGS_PATH = BASE_DIR / "settings.toml"
 
 
