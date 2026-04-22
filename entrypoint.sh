@@ -11,7 +11,15 @@ fi
 
 if [ ! -f "settings.toml" ] || grep -q "YOUR_DISCORD_TOKEN" settings.toml; then
     echo "⚙️ Создание settings.toml из переменных окружения..."
-    cat > settings.toml << SETTINGS_EOF
+    export DISCORD_TOKEN="${DISCORD_TOKEN}"
+    export GROQ_API_KEY="${GROQ_API_KEY}"
+    export TICKET_CATEGORY_ID="${TICKET_CATEGORY_ID}"
+    export BOT_ROLE_ID="${BOT_ROLE_ID}"
+    export USE_PROXY="${USE_PROXY:-false}"
+    export PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
+    export PROXY_PORT="${PROXY_PORT:-10808}"
+    
+    cat > settings.toml << EOF
 # Discord Bot Settings
 [discord]
 token = "${DISCORD_TOKEN}"
@@ -31,11 +39,11 @@ api_key = "not-needed"
 model = "local-model"
 
 [proxy]
-enabled = ${USE_PROXY:-false}
-host = "${PROXY_HOST:-127.0.0.1}"
-port = ${PROXY_PORT:-10808}
-username = "${PROXY_USERNAME:-}"
-password = "${PROXY_PASSWORD:-}"
+enabled = ${USE_PROXY}
+host = "${PROXY_HOST}"
+port = ${PROXY_PORT}
+username = ""
+password = ""
 
 [paths]
 model_cache = "model_cache"
@@ -58,7 +66,7 @@ phrases = [
     "старший специалист", "позови специалиста", "переведи на специалиста",
     "передам", "передаю", "передал", "передать человеку", "передаю тикет"
 ]
-SETTINGS_EOF
+EOF
     echo "✅ settings.toml создан"
 fi
 
