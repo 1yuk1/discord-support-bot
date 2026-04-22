@@ -1,15 +1,13 @@
-# ==============================================================================
-# Discord Bot Settings — SinusSMP Support
-# ВАЖНО: Замените placeholder'ы на реальные значения перед запуском
-# ==============================================================================
+# Discord Bot Settings
+# ЗАПОЛНИ ЗНАЧЕНИЯ ПЕРЕД ЗАПУСКОМ
 
 [discord]
 token = "YOUR_DISCORD_TOKEN"
-ticket_category_id = 123456789012345678
-bot_role_id = 123456789012345678
+ticket_category_id = 0
+bot_role_id = 0
 
 [ai]
-provider = "groq"  # "groq" или "local" (LM Studio / Ollama / vLLM)
+provider = "groq"
 
 [ai.groq]
 api_key = "YOUR_GROQ_API_KEY"
@@ -21,14 +19,13 @@ api_key = "not-needed"
 model = "local-model"
 
 [proxy]
-enabled = false
-host = "127.0.0.1"
-port = 10808
-username = ""
-password = ""
+enabled = true
+host = "YOUR_PROXY_HOST"
+port = YOUR_PROXY_PORT
+username = "YOUR_PROXY_USERNAME"
+password = "YOUR_PROXY_PASSWORD"
 
 [paths]
-# Относительные пути от директории проекта
 model_cache = "model_cache"
 database = "chroma_db"
 logs = "logs"
@@ -41,7 +38,6 @@ duplicate_check_time = 5
 max_history = 6
 
 [transfer]
-# Фразы, при которых бот передаёт тикет человеку
 phrases = [
     "тех поддержка", "техподдержка", "переведи на человека", "позови человека",
     "живой человек", "оператор", "администратор", "админ", "модератор", "модер",
