@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.git/
+.github/
+model_cache/
+chroma_db/
+*.log
+.env
+*.tom
+Dockerfile
+entrypoint.sh
+*.md
+*.zip
