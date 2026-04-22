@@ -16,9 +16,9 @@
     "file_denylist_enabled": false,
     "startup": "/entrypoint.sh",
     "config": {
-        "files": "{}",
-        "startup": "{\"done\":\"Бот запущен\",\"userInteraction\":[]}",
-        "logs": "{\"custom\":false,\"location\":\"logs/latest.log\"}",
+        "files": "{\r\n}",
+        "startup": "{\r\n    \"done\": \"Бот запущен\",\r\n    \"userInteraction\": []\r\n}",
+        "logs": "{\r\n    \"custom\": false,\r\n    \"location\": \"logs/latest.log\"\r\n}",
         "stop": "^C"
     },
     "scripts": {
