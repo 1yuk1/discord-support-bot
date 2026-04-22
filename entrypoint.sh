@@ -50,8 +50,8 @@ model = "local-model"
 enabled = ${USE_PROXY:-false}
 host = "${PROXY_HOST:-127.0.0.1}"
 port = ${PROXY_PORT:-10808}
-username = ""
-password = ""
+username = "${PROXY_USERNAME:-}"
+password = "${PROXY_PASSWORD:-}"
 
 [paths]
 model_cache = "model_cache"
