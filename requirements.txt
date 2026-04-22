@@ -3,5 +3,5 @@ groq>=0.4
 chromadb>=0.4
 sentence-transformers>=2.2
 httpx[socks]>=0.25
-aiohttp-socks>=0.8
+aiohttp>=3.9
 openai>=1.0

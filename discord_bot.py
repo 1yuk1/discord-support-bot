@@ -13,7 +13,7 @@ from pathlib import Path
 from collections import deque
 import time
 import httpx
-from aiohttp_socks import ProxyConnector
+import aiohttp
 from openai import OpenAI
 
 import config
