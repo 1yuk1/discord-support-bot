@@ -251,12 +251,12 @@ async def setup_hook():
     """Настройка прокси при запуске бота."""
     if USE_PROXY:
         proxy_url = get_proxy_url()
-        # Пересоздаём сессию с прокси
+        # Пересоздаём сессию с HTTP прокси
         if hasattr(bot, 'http') and hasattr(bot.http, '_HTTPClient__session'):
             await bot.http.close()
         
-        connector = ProxyConnector.from_url(proxy_url)
         import aiohttp
+        connector = aiohttp.ProxyConnector.from_url(proxy_url)
         bot.http._HTTPClient__session = aiohttp.ClientSession(
             connector=connector,
             headers=bot.http._HTTPClient__session.headers if hasattr(bot.http, '_HTTPClient__session') else {}
