@@ -7,10 +7,22 @@ cd /home/container
 export HF_HOME=/home/container/model_cache
 export TRANSFORMERS_CACHE=/home/container/model_cache
 
-if [ ! -f "discord_bot.py" ]; then
-    echo "📦 Скачивание кода бота из GitHub..."
-    git clone --depth 1 https://github.com/1yuk1/discord-support-bot.git .
-    rm -rf .git
+# Создаём директории для данных
+mkdir -p chroma_db logs model_cache
+
+# Всегда обновляем код из GitHub (сохраняя пользовательские данные)
+echo "📦 Обновление кода из GitHub..."
+git clone --depth 1 https://github.com/1yuk1/discord-support-bot.git /tmp/bot-update 2>/dev/null || {
+    echo "⚠️ Не удалось скачать обновления, используем текущий код"
+}
+
+if [ -d "/tmp/bot-update" ]; then
+    # Копируем только код, НЕ перезаписываем данные пользователя
+    cp -f /tmp/bot-update/*.py /home/container/ 2>/dev/null || true
+    cp -f /tmp/bot-update/*.sh /home/container/ 2>/dev/null || true
+    cp -f /tmp/bot-update/requirements.txt /home/container/ 2>/dev/null || true
+    rm -rf /tmp/bot-update
+    echo "✅ Код обновлён"
 fi
 
 if [ ! -f "settings.toml" ]; then
@@ -77,8 +89,6 @@ phrases = [
 EOF
     echo "✅ settings.toml создан"
 fi
-
-mkdir -p chroma_db logs model_cache
 
 echo "🚀 Запуск бота..."
 exec python discord_bot.py

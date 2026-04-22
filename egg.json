@@ -1,88 +1,121 @@
 {
-    "_comment": "DO NOT EDIT: DO NOT MANUALLY SET UUID, LET THE PANEL DO IT",
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL",
     "meta": {
         "version": "PTDL_v2",
         "update_url": null
     },
-    "exported_at": "2026-04-22T12:00:00.000Z",
+    "exported_at": "2026-04-23T00:00:00.000Z",
     "name": "Discord Support Bot",
-    "author": "1yuk1",
-    "description": "Discord бот поддержки с AI (Groq) и ChromaDB",
+    "author": "1yuk1@github.com",
+    "description": "Discord бот поддержки с AI (Groq) и ChromaDB. Автоматически скачивает код из GitHub при первом запуске.",
     "features": null,
     "docker_images": {
-        "ghcr.io/1yuk1/discord-support-bot:latest": "ghcr.io/1yuk1/discord-support-bot:latest"
+        "Discord Support Bot": "ghcr.io/1yuk1/discord-support-bot:latest"
     },
     "file_denylist": [],
-    "file_denylist_enabled": false,
-    "startup": "/entrypoint.sh",
+    "startup": "bash /entrypoint.sh",
     "config": {
-        "files": "{\n}",
-        "startup": "{\n    \"done\": \"Бот запущен\"\n}",
-        "logs": "{\n    \"custom\": false,\n    \"location\": \"logs/latest.log\"\n}",
+        "files": "{}",
+        "startup": "{\"done\": \"Бот запущен\"}",
+        "logs": "{\"custom\": false, \"location\": \"logs/latest.log\"}",
         "stop": "^C"
     },
     "scripts": {
         "installation": {
             "container": "ghcr.io/1yuk1/discord-support-bot:latest",
             "entrypoint": "bash",
-            "script": "#!/bin/bash\necho done"
+            "script": "#!/bin/bash\ncd /mnt/server\nmkdir -p chroma_db logs model_cache\necho \"Installation complete\""
         }
     },
     "variables": [
         {
             "name": "Discord Token",
-            "description": "Токен Discord бота",
+            "description": "Токен Discord бота из Developer Portal",
             "env_variable": "DISCORD_TOKEN",
             "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
             "rules": "required|string",
             "field_type": "text"
         },
         {
             "name": "Groq API Key",
-            "description": "API ключ Groq",
+            "description": "API ключ Groq для работы AI",
             "env_variable": "GROQ_API_KEY",
             "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
             "rules": "required|string",
             "field_type": "text"
         },
         {
             "name": "Ticket Category ID",
-            "description": "ID категории для тикетов",
+            "description": "ID категории Discord для тикетов. 0 = бот отвечает во всех каналах.",
             "env_variable": "TICKET_CATEGORY_ID",
-            "default_value": "",
-            "rules": "",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
             "field_type": "text"
         },
         {
             "name": "Bot Role ID",
-            "description": "ID роли бота",
+            "description": "ID роли бота. 0 = без ограничений по роли.",
             "env_variable": "BOT_ROLE_ID",
-            "default_value": "",
-            "rules": "",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
             "field_type": "text"
         },
         {
             "name": "Use Proxy",
-            "description": "Использовать прокси",
+            "description": "Включить HTTP прокси для Discord и Groq (true/false)",
             "env_variable": "USE_PROXY",
             "default_value": "false",
-            "rules": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
             "field_type": "text"
         },
         {
             "name": "Proxy Host",
-            "description": "Хост прокси",
+            "description": "IP-адрес или хост прокси-сервера",
             "env_variable": "PROXY_HOST",
             "default_value": "127.0.0.1",
-            "rules": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
             "field_type": "text"
         },
         {
             "name": "Proxy Port",
-            "description": "Порт прокси",
+            "description": "Порт прокси-сервера",
             "env_variable": "PROXY_PORT",
             "default_value": "10808",
-            "rules": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Username",
+            "description": "Логин для прокси (оставить пустым если не нужен)",
+            "env_variable": "PROXY_USERNAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Password",
+            "description": "Пароль для прокси (оставить пустым если не нужен)",
+            "env_variable": "PROXY_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
             "field_type": "text"
         }
     ]
