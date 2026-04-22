@@ -49,9 +49,10 @@ RATE_WINDOW = config.RATE_WINDOW
 # ==============================================================================
 def get_proxy_url():
     """Возвращает URL прокси для подключения."""
+    proxy_type = "http"
     if PROXY_USERNAME and PROXY_PASSWORD:
-        return f"socks5://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
-    return f"socks5://{PROXY_HOST}:{PROXY_PORT}"
+        return f"{proxy_type}://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
+    return f"{proxy_type}://{PROXY_HOST}:{PROXY_PORT}"
 
 
 # Инициализация AI клиентов
