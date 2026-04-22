@@ -9,28 +9,32 @@ if [ ! -f "discord_bot.py" ]; then
     rm -rf .git
 fi
 
-if [ ! -f "settings.toml" ] || grep -q "YOUR_DISCORD_TOKEN" settings.toml; then
-    echo "⚙️ Создание settings.toml из переменных окружения..."
-    export DISCORD_TOKEN="${DISCORD_TOKEN}"
-    export GROQ_API_KEY="${GROQ_API_KEY}"
-    export TICKET_CATEGORY_ID="${TICKET_CATEGORY_ID}"
-    export BOT_ROLE_ID="${BOT_ROLE_ID}"
-    export USE_PROXY="${USE_PROXY:-false}"
-    export PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
-    export PROXY_PORT="${PROXY_PORT:-10808}"
+if [ ! -f "settings.toml" ]; then
+    echo "⚙️ Создание settings.toml..."
+    
+    # Проверка обязательных переменных
+    if [ -z "$DISCORD_TOKEN" ] || [ "$DISCORD_TOKEN" = "YOUR_DISCORD_TOKEN" ]; then
+        echo "❌ Ошибка: DISCORD_TOKEN не установлен!"
+        echo "   Добавь переменные в Pterodactyl Startup → Environment Variables"
+        exit 1
+    fi
+    if [ -z "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY" = "YOUR_GROQ_API_KEY" ]; then
+        echo "❌ Ошибка: GROQ_API_KEY не установлен!"
+        exit 1
+    fi
     
     cat > settings.toml << EOF
 # Discord Bot Settings
 [discord]
-token = "${DISCORD_TOKEN}"
-ticket_category_id = ${TICKET_CATEGORY_ID}
-bot_role_id = ${BOT_ROLE_ID}
+token = "$DISCORD_TOKEN"
+ticket_category_id = ${TICKET_CATEGORY_ID:-0}
+bot_role_id = ${BOT_ROLE_ID:-0}
 
 [ai]
 provider = "groq"
 
 [ai.groq]
-api_key = "${GROQ_API_KEY}"
+api_key = "$GROQ_API_KEY"
 model = "groq/compound"
 
 [ai.local]
@@ -39,9 +43,9 @@ api_key = "not-needed"
 model = "local-model"
 
 [proxy]
-enabled = ${USE_PROXY}
-host = "${PROXY_HOST}"
-port = ${PROXY_PORT}
+enabled = ${USE_PROXY:-false}
+host = "${PROXY_HOST:-127.0.0.1}"
+port = ${PROXY_PORT:-10808}
 username = ""
 password = ""
 
