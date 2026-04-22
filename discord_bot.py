@@ -13,7 +13,7 @@ from pathlib import Path
 from collections import deque
 import time
 import httpx
-from aiohttp_socks import ProxyConnector
+import aiohttp
 from openai import OpenAI
 
 import config
@@ -243,25 +243,20 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.messages = True
 
-# Настройка прокси для Discord бота будет выполнена в setup_hook
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-@bot.event
-async def setup_hook():
-    """Настройка прокси при запуске бота."""
-    if USE_PROXY:
-        proxy_url = get_proxy_url()
-        # Пересоздаём сессию с прокси
-        if hasattr(bot, 'http') and hasattr(bot.http, '_HTTPClient__session'):
-            await bot.http.close()
-        
-        connector = ProxyConnector.from_url(proxy_url)
-        import aiohttp
-        bot.http._HTTPClient__session = aiohttp.ClientSession(
-            connector=connector,
-            headers=bot.http._HTTPClient__session.headers if hasattr(bot.http, '_HTTPClient__session') else {}
-        )
-        print(f"🔗 Прокси настроен: {PROXY_HOST}:{PROXY_PORT}")
+# Настройка прокси для Discord бота
+if USE_PROXY:
+    proxy_url = get_proxy_url()
+    proxy_auth = None
+    if PROXY_USERNAME and PROXY_PASSWORD:
+        proxy_auth = aiohttp.BasicAuth(PROXY_USERNAME, PROXY_PASSWORD)
+        # Для прокси с авторизацией передаём URL без credentials
+        proxy_url_for_discord = f"http://{PROXY_HOST}:{PROXY_PORT}"
+    else:
+        proxy_url_for_discord = proxy_url
+    bot = commands.Bot(command_prefix='!', intents=intents, proxy=proxy_url_for_discord, proxy_auth=proxy_auth)
+    print(f"🔗 Discord прокси настроен: {PROXY_HOST}:{PROXY_PORT}")
+else:
+    bot = commands.Bot(command_prefix='!', intents=intents)
 
 conversation_histories = {}
 
