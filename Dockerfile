@@ -2,6 +2,9 @@ FROM python:3.14-slim
 
 WORKDIR /app
 
+ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
+ENV USER=root
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
