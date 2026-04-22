@@ -4,7 +4,7 @@
         "version": "PTDL_v2",
         "update_url": null
     },
-    "exported_at": "2026-04-22T00:00:00.000Z",
+    "exported_at": "2026-04-22T12:00:00.000Z",
     "name": "Discord Support Bot",
     "author": "1yuk1",
     "description": "Discord бот поддержки с AI (Groq) и ChromaDB",
@@ -16,16 +16,16 @@
     "file_denylist_enabled": false,
     "startup": "/entrypoint.sh",
     "config": {
-        "files": "{\r\n}",
-        "startup": "{\r\n    \"done\": \"Бот запущен\",\r\n    \"userInteraction\": []\r\n}",
-        "logs": "{\r\n    \"custom\": false,\r\n    \"location\": \"logs/latest.log\"\r\n}",
+        "files": "{\n}",
+        "startup": "{\n    \"done\": \"Бот запущен\"\n}",
+        "logs": "{\n    \"custom\": false,\n    \"location\": \"logs/latest.log\"\n}",
         "stop": "^C"
     },
     "scripts": {
         "installation": {
             "container": "ghcr.io/1yuk1/discord-support-bot:latest",
             "entrypoint": "bash",
-            "script": "#!/bin/bash\necho \"Using pre-built Docker image\"\n"
+            "script": "#!/bin/bash\necho done"
         }
     },
     "variables": [
@@ -50,7 +50,7 @@
             "description": "ID категории для тикетов",
             "env_variable": "TICKET_CATEGORY_ID",
             "default_value": "",
-            "rules": "string",
+            "rules": "",
             "field_type": "text"
         },
         {
@@ -58,15 +58,15 @@
             "description": "ID роли бота",
             "env_variable": "BOT_ROLE_ID",
             "default_value": "",
-            "rules": "string",
+            "rules": "",
             "field_type": "text"
         },
         {
             "name": "Use Proxy",
-            "description": "Использовать прокси (true/false)",
+            "description": "Использовать прокси",
             "env_variable": "USE_PROXY",
             "default_value": "false",
-            "rules": "string",
+            "rules": "",
             "field_type": "text"
         },
         {
@@ -74,7 +74,7 @@
             "description": "Хост прокси",
             "env_variable": "PROXY_HOST",
             "default_value": "127.0.0.1",
-            "rules": "string",
+            "rules": "",
             "field_type": "text"
         },
         {
@@ -82,7 +82,7 @@
             "description": "Порт прокси",
             "env_variable": "PROXY_PORT",
             "default_value": "10808",
-            "rules": "string",
+            "rules": "",
             "field_type": "text"
         }
     ]
