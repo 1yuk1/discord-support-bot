@@ -16,12 +16,18 @@ DB_PATH = config.DB_PATH
 MODEL_CACHE_PATH = config.MODEL_CACHE_PATH
 EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
+AUTO_UPDATE_CHROMA_DB = config.AUTO_UPDATE_CHROMA_DB
 
 
 def format_embedding_text(text, mode):
     if EMBEDDING_MODEL_TYPE == "e5":
         return f"{mode}: {text}"
     return text
+
+if not AUTO_UPDATE_CHROMA_DB:
+    print("Автообновление ChromaDB отключено в settings.toml (paths.auto_update_chroma_db = false).")
+    print("База данных не изменена.")
+    sys.exit(0)
 
 # Удаляем старую базу данных если существует (чтобы создать новую)
 if os.path.exists(DB_PATH):

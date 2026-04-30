@@ -1,6 +1,8 @@
 import sys
 import os
-sys.stdout.reconfigure(encoding='utf-8')
+reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+if reconfigure_stdout:
+    reconfigure_stdout(encoding="utf-8")
 
 import discord
 from discord.ext import commands
@@ -15,6 +17,7 @@ import time
 import httpx
 import aiohttp
 from openai import OpenAI
+from typing import Any
 
 import config
 
@@ -23,6 +26,11 @@ DISCORD_TOKEN = config.DISCORD_TOKEN
 AI_PROVIDER = config.AI_PROVIDER
 GROQ_API_KEY = config.GROQ_API_KEY
 GROQ_MODEL = config.GROQ_MODEL
+OPENROUTER_API_KEY = config.OPENROUTER_API_KEY
+OPENROUTER_MODEL = config.OPENROUTER_MODEL
+OPENROUTER_API_URL = config.OPENROUTER_API_URL
+OPENROUTER_SITE_URL = config.OPENROUTER_SITE_URL
+OPENROUTER_APP_NAME = config.OPENROUTER_APP_NAME
 LOCAL_API_URL = config.LOCAL_API_URL
 LOCAL_API_KEY = config.LOCAL_API_KEY
 LOCAL_MODEL = config.LOCAL_MODEL
@@ -65,6 +73,9 @@ def format_embedding_text(text, mode):
 
 
 # Инициализация AI клиентов
+groq_client: Any = None
+openai_client: Any = None
+
 if AI_PROVIDER == "groq":
     print(f"🤖 AI провайдер: Groq (модель: {GROQ_MODEL})")
     if USE_PROXY:
@@ -75,6 +86,39 @@ if AI_PROVIDER == "groq":
     else:
         groq_client = Groq(api_key=GROQ_API_KEY)
     openai_client = None
+
+elif AI_PROVIDER == "openrouter":
+    print(f"🤖 AI провайдер: OpenRouter (модель: {OPENROUTER_MODEL})")
+    if not OPENROUTER_API_KEY:
+        print("❌ OpenRouter API key не указан в settings.toml")
+        exit()
+    if not OPENROUTER_MODEL:
+        print("❌ OpenRouter model не указана в settings.toml")
+        exit()
+
+    default_headers = {}
+    if OPENROUTER_SITE_URL:
+        default_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
+    if OPENROUTER_APP_NAME:
+        default_headers["X-Title"] = OPENROUTER_APP_NAME
+
+    if USE_PROXY:
+        proxy_url = get_proxy_url()
+        print(f"🔄 OpenRouter будет использовать прокси: {PROXY_HOST}:{PROXY_PORT}")
+        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
+        openai_client = OpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_API_URL,
+            default_headers=default_headers,
+            http_client=http_client
+        )
+    else:
+        openai_client = OpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_API_URL,
+            default_headers=default_headers
+        )
+    groq_client = None
 
 elif AI_PROVIDER == "local":
     print(f"🤖 AI провайдер: Локальная модель (URL: {LOCAL_API_URL}, модель: {LOCAL_MODEL})")
@@ -242,6 +286,15 @@ def generate_answer(user_input, conversation_history):
         if AI_PROVIDER == "groq":
             response = groq_client.chat.completions.create(
                 model=GROQ_MODEL,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1024
+            )
+            return response.choices[0].message.content
+
+        elif AI_PROVIDER == "openrouter":
+            response = openai_client.chat.completions.create(
+                model=OPENROUTER_MODEL,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1024

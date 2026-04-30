@@ -61,6 +61,14 @@ EMBEDDING_MODEL_TYPE: str = _cfg["ai"].get("embedding_model_type", "bge")
 GROQ_API_KEY: str = _cfg["ai"]["groq"]["api_key"]
 GROQ_MODEL: str = _cfg["ai"]["groq"]["model"]
 
+OPENROUTER_API_KEY: str = _cfg["ai"].get("openrouter", {}).get("api_key", "")
+OPENROUTER_MODEL: str = _cfg["ai"].get("openrouter", {}).get("model", "")
+OPENROUTER_API_URL: str = _cfg["ai"].get("openrouter", {}).get(
+    "api_url", "https://openrouter.ai/api/v1"
+)
+OPENROUTER_SITE_URL: str = _cfg["ai"].get("openrouter", {}).get("site_url", "")
+OPENROUTER_APP_NAME: str = _cfg["ai"].get("openrouter", {}).get("app_name", "SinusSMP Support Bot")
+
 LOCAL_API_URL: str = _cfg["ai"]["local"]["api_url"]
 LOCAL_API_KEY: str = _cfg["ai"]["local"]["api_key"]
 LOCAL_MODEL: str = _cfg["ai"]["local"]["model"]
@@ -76,6 +84,7 @@ PROXY_PASSWORD: str = _cfg["proxy"].get("password", "")
 MODEL_CACHE_PATH: str = str(BASE_DIR / _cfg["paths"]["model_cache"])
 DB_PATH: str = str(BASE_DIR / _cfg["paths"]["database"])
 LOGS_PATH: str = str(BASE_DIR / _cfg["paths"]["logs"])
+AUTO_UPDATE_CHROMA_DB: bool = _cfg["paths"].get("auto_update_chroma_db", True)
 
 # ── Rate Limit ───────────────────────────────────────────────────────────────
 RATE_LIMIT: int = _cfg["rate_limit"]["global_limit"]

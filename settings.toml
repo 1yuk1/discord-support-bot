@@ -17,6 +17,13 @@ embedding_model_type = "bge"
 api_key = "YOUR_GROQ_API_KEY"
 model = "groq/compound"
 
+[ai.openrouter]
+api_key = "YOUR_OPENROUTER_API_KEY"
+model = "openai/gpt-4o-mini"
+api_url = "https://openrouter.ai/api/v1"
+site_url = ""
+app_name = "SinusSMP Support Bot"
+
 [ai.local]
 api_url = "http://localhost:1234/v1"
 api_key = "not-needed"
@@ -33,6 +40,7 @@ password = "YOUR_PROXY_PASSWORD"
 model_cache = "model_cache"
 database = "chroma_db"
 logs = "logs"
+auto_update_chroma_db = true
 
 [rate_limit]
 global_limit = 30
