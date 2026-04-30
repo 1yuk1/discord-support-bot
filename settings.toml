@@ -10,6 +10,8 @@ ignored_role_ids = "0"
 
 [ai]
 provider = "groq"
+embedding_model = "BAAI/bge-m3"
+embedding_model_type = "bge"
 
 [ai.groq]
 api_key = "YOUR_GROQ_API_KEY"
@@ -23,7 +25,7 @@ model = "local-model"
 [proxy]
 enabled = true
 host = "YOUR_PROXY_HOST"
-port = YOUR_PROXY_PORT
+port = 0
 username = "YOUR_PROXY_USERNAME"
 password = "YOUR_PROXY_PASSWORD"
 
@@ -42,7 +44,7 @@ max_history = 6
 [transfer]
 phrases = [
     "тех поддержка", "техподдержка", "переведи на человека", "позови человека",
-    "живой человек", "оператор", "администратор", "админ", "модератор", "модер",
+    "живой человек", "оператор",
     "переведи на админа", "позови админа", "соедини с человеком", "хочу человека",
     "говорить с человеком", "поговорить с человеком", "пригласи человека",
     "старший специалист", "позови специалиста", "переведи на специалиста",

@@ -55,6 +55,8 @@ IGNORED_ROLE_IDS: list[int] = _parse_id_list(_cfg["discord"].get("ignored_role_i
 
 # ── AI ───────────────────────────────────────────────────────────────────────
 AI_PROVIDER: str = _cfg["ai"]["provider"]
+EMBEDDING_MODEL: str = _cfg["ai"].get("embedding_model", "intfloat/multilingual-e5-base")
+EMBEDDING_MODEL_TYPE: str = _cfg["ai"].get("embedding_model_type", "e5")
 
 GROQ_API_KEY: str = _cfg["ai"]["groq"]["api_key"]
 GROQ_MODEL: str = _cfg["ai"]["groq"]["model"]

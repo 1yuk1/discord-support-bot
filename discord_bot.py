@@ -26,6 +26,8 @@ GROQ_MODEL = config.GROQ_MODEL
 LOCAL_API_URL = config.LOCAL_API_URL
 LOCAL_API_KEY = config.LOCAL_API_KEY
 LOCAL_MODEL = config.LOCAL_MODEL
+EMBEDDING_MODEL = config.EMBEDDING_MODEL
+EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
 USE_PROXY = config.USE_PROXY
 PROXY_HOST = config.PROXY_HOST
 PROXY_PORT = config.PROXY_PORT
@@ -54,6 +56,12 @@ def get_proxy_url():
     if PROXY_USERNAME and PROXY_PASSWORD:
         return f"http://{PROXY_USERNAME}:{PROXY_PASSWORD}@{PROXY_HOST}:{PROXY_PORT}"
     return f"http://{PROXY_HOST}:{PROXY_PORT}"
+
+
+def format_embedding_text(text, mode):
+    if EMBEDDING_MODEL_TYPE == "e5":
+        return f"{mode}: {text}"
+    return text
 
 
 # Инициализация AI клиентов
@@ -104,7 +112,7 @@ except Exception as e:
 # ЗАГРУЗКА МОДЕЛИ ДЛЯ ЭМБЕДДИНГОВ
 # ==============================================================================
 print("⬇️ Загрузка модели для поиска...")
-embedder = SentenceTransformer('intfloat/multilingual-e5-base', cache_folder=MODEL_CACHE_PATH)
+embedder = SentenceTransformer(EMBEDDING_MODEL, cache_folder=MODEL_CACHE_PATH)
 
 # ==============================================================================
 # ЛОГИРОВАНИЕ
@@ -148,7 +156,7 @@ def log_message(channel_id, user_id, username, message, bot_response=None, is_hu
 # ФУНКЦИИ AI
 # ==============================================================================
 def search_knowledge(query):
-    query_embedding = embedder.encode("query: " + query).tolist()
+    query_embedding = embedder.encode(format_embedding_text(query, "query")).tolist()
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -175,13 +183,22 @@ def generate_answer(user_input, conversation_history):
 
     system_instruction = """Ты — опытный агент поддержки SinusSMP.
 Твоя задача: помочь игроку, используя КОНТЕКСТ.
-Если в КОНТЕКСТЕ есть блок "## Диагностика", сначала задай эти вопросы игроку, прежде чем давать решение.
+Если в КОНТЕКСТЕ есть блок "## Диагностика", задай только следующий самый важный вопрос, которого не хватает для решения. Не задавай весь список сразу.
+Если в истории уже есть ответ на вопрос из диагностики, не повторяй его.
+Если данных уже достаточно, сразу дай решение или следующий понятный шаг.
 Если информации в контексте НЕТ, вежливо уточни детали проблемы.
-Никогда не выдумывай IP-адреса или команды, которых нет в базе.
+Никогда не выдумывай IP-адреса, команды, способы оплаты или сроки, которых нет в базе.
 
 ВАЖНО — Передача на человека:
 - Если игрок просит перевести на человека/техподдержку/админа/оператора/специалиста — отвечай: "Я передам ваш тикет старшему специалисту. Пожалуйста, ожидайте, в ближайшее свободное время вам ответят."
 - Не задавай дополнительных вопросов если игрок явно просит перевести на человека.
+
+ВАЖНО — Донат:
+- На сервере доступны только easyDonate и Boosty.
+- Для другой страны основной вариант — Boosty: https://boosty.to/ingrog
+- Если донат через easyDonate не пришел, сначала проси перезайти на режим, указанный при оплате: lite1, lite2, lite3 или PRAC.
+- Если это не помогло, запрашивай именно чек от easyDonate с электронной почты, указанной при оплате, а не чек банка.
+- Если оплата не проходит, не обещай автоматическое решение. Предложи доступные способы оплаты или пользовательский вариант для ручной проверки.
 
 - НИКОГДА не показывай игроку техническую информацию.
 - Будь вежлив и краток.
