@@ -35,7 +35,9 @@ MODEL_CACHE_PATH = config.MODEL_CACHE_PATH
 DB_PATH = config.DB_PATH
 MAX_HISTORY = config.MAX_HISTORY
 TICKET_CATEGORY_ID = config.TICKET_CATEGORY_ID
+TICKET_CATEGORY_IDS = set(config.TICKET_CATEGORY_IDS)
 BOT_ROLE_ID = config.BOT_ROLE_ID
+IGNORED_ROLE_IDS = set(config.IGNORED_ROLE_IDS)
 LOGS_PATH = config.LOGS_PATH
 HUMAN_TRANSFER_PHRASES = config.HUMAN_TRANSFER_PHRASES
 CHANNEL_COOLDOWN = config.CHANNEL_COOLDOWN
@@ -155,8 +157,10 @@ def search_knowledge(query):
     )
 
     context_parts = []
-    docs = results['documents'][0]
-    metas = results['metadatas'][0]
+    docs_list = results.get('documents') or [[]]
+    metas_list = results.get('metadatas') or [[]]
+    docs = docs_list[0] if docs_list else []
+    metas = metas_list[0] if metas_list else []
 
     for doc, meta in zip(docs, metas):
         if isinstance(meta, dict) and meta.get('hidden') == True:
@@ -276,9 +280,62 @@ def check_rate_limit():
     global_message_times.append(current_time)
     return True
 
-def check_bot_has_role(guild):
-    if BOT_ROLE_ID is None:
+
+def create_channel_state():
+    return {
+        "history": [],
+        "human_mode": False,
+        "last_message": "",
+        "last_message_time": 0,
+        "last_answer_time": 0,
+        "user_messages": deque(),
+        "processed_message_ids": set(),
+    }
+
+
+def is_ticket_channel(channel):
+    if not TICKET_CATEGORY_IDS:
         return True
+    return channel.category_id in TICKET_CATEGORY_IDS
+
+
+def member_has_ignored_role(member):
+    if not IGNORED_ROLE_IDS or member is None:
+        return False
+    return any(role.id in IGNORED_ROLE_IDS for role in getattr(member, "roles", []))
+
+
+def should_use_message_as_question(message):
+    content = (message.content or "").strip()
+    if content:
+        return True
+    return len(message.embeds) > 0
+
+
+def extract_message_text(message):
+    content = (message.content or "").strip()
+    if content:
+        return content
+
+    embed_parts = []
+    for embed in message.embeds:
+        if embed.title:
+            embed_parts.append(embed.title.strip())
+        if embed.description:
+            embed_parts.append(embed.description.strip())
+        for field in embed.fields:
+            field_text = " ".join(part for part in [field.name, field.value] if part)
+            field_text = field_text.strip()
+            if field_text:
+                embed_parts.append(field_text)
+
+    return "\n".join(part for part in embed_parts if part).strip()
+
+def check_bot_has_role(guild):
+    if BOT_ROLE_ID in (None, 0):
+        return True
+    if guild is None or bot.user is None:
+        return False
     
     bot_member = guild.get_member(bot.user.id)
     if bot_member is None:
@@ -314,56 +371,72 @@ def is_human_transfer(text):
 @bot.event
 async def on_ready():
     print(f'✅ Бот запущен: {bot.user}')
-    print(f'ID бота: {bot.user.id}')
+    if bot.user is not None:
+        print(f'ID бота: {bot.user.id}')
+    if TICKET_CATEGORY_IDS:
+        print(f'📂 Категории тикетов: {sorted(TICKET_CATEGORY_IDS)}')
+    else:
+        print('📂 Категории тикетов: все категории')
+    if IGNORED_ROLE_IDS:
+        print(f'🚫 Игнорируемые роли: {sorted(IGNORED_ROLE_IDS)}')
     print('─────────────────────────')
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
+    if not is_ticket_channel(message.channel):
+        await bot.process_commands(message)
         return
 
-    if TICKET_CATEGORY_ID and message.channel.category_id != TICKET_CATEGORY_ID:
-        await bot.process_commands(message)
+    if bot.user is not None and message.author.bot and message.author.id == bot.user.id:
+        return
+
+    if message.author.bot and not should_use_message_as_question(message):
+        return
+
+    if not message.author.bot and member_has_ignored_role(message.author):
         return
 
     channel_id = message.channel.id
     
     if channel_id not in conversation_histories:
-        conversation_histories[channel_id] = {
-            "history": [],
-            "human_mode": False,
-            "last_message": "",
-            "last_message_time": 0,
-            "last_answer_time": 0,
-            "user_messages": deque()
-        }
+        conversation_histories[channel_id] = create_channel_state()
     
     channel_data = conversation_histories[channel_id]
-    
-    # Проверка флуда пользователя (более 3 сообщений за 10 секунд)
-    current_time = time.time()
-    user_times = channel_data.get("user_messages", deque())
-    while user_times and current_time - user_times[0] > 10:
-        user_times.popleft()
-    
-    user_times.append(current_time)
-    channel_data["user_messages"] = user_times
-    
-    if len(user_times) > 3:
-        await message.channel.send("⏳ Не флудите! Подождите перед следующим вопросом.")
+    if message.id in channel_data["processed_message_ids"]:
         return
+
+    message_text = extract_message_text(message)
+    if not message_text:
+        return
+
+    channel_data["processed_message_ids"].add(message.id)
+    if len(channel_data["processed_message_ids"]) > 200:
+        channel_data["processed_message_ids"] = set(list(channel_data["processed_message_ids"])[-100:])
+    
+    if not message.author.bot:
+        current_time = time.time()
+        user_times = channel_data.get("user_messages", deque())
+        while user_times and current_time - user_times[0] > 10:
+            user_times.popleft()
+
+        user_times.append(current_time)
+        channel_data["user_messages"] = user_times
+
+        if len(user_times) > 3:
+            await message.channel.send("⏳ Не флудите! Подождите перед следующим вопросом.")
+            return
     
     log_message(
         channel_id,
         message.author.id,
         str(message.author),
-        message.content
+        message_text
     )
     
     if channel_data["human_mode"]:
         return
     
-    if check_duplicate_message(channel_data, message.content):
+    if check_duplicate_message(channel_data, message_text):
         return
     
     cooldown_remaining = check_channel_cooldown(channel_data)
@@ -379,11 +452,11 @@ async def on_message(message):
         return
 
     # Проверка: если игрок просит перевести на человека
-    if is_human_transfer(message.content):
+    if is_human_transfer(message_text):
         transfer_answer = "Я передам ваш тикет старшему специалисту. Пожалуйста, ожидайте, в ближайшее свободное время вам ответят."
         await message.channel.send(transfer_answer)
         
-        channel_data["last_message"] = message.content
+        channel_data["last_message"] = message_text
         channel_data["last_message_time"] = time.time()
         channel_data["last_answer_time"] = time.time()
         channel_data["human_mode"] = True
@@ -392,23 +465,24 @@ async def on_message(message):
             channel_id,
             message.author.id,
             str(message.author),
-            message.content,
+            message_text,
             bot_response=transfer_answer,
             is_human_transfer=True
         )
         
-        channel_data["history"].append(f"Пользователь: {message.content}")
+        author_label = "Система" if message.author.bot else "Пользователь"
+        channel_data["history"].append(f"{author_label}: {message_text}")
         channel_data["history"].append(f"Бот: {transfer_answer}")
         if len(channel_data["history"]) > MAX_HISTORY * 2:
             channel_data["history"] = channel_data["history"][-MAX_HISTORY * 2:]
         return
 
     async with message.channel.typing():
-        answer = generate_answer(message.content, channel_data["history"])
+        answer = generate_answer(message_text, channel_data["history"])
     
     await message.channel.send(answer)
     
-    channel_data["last_message"] = message.content
+    channel_data["last_message"] = message_text
     channel_data["last_message_time"] = time.time()
     
     # Обновляем время ответа ТОЛЬКО если ответ успешный
@@ -419,11 +493,12 @@ async def on_message(message):
         channel_id,
         message.author.id,
         str(message.author),
-        message.content,
+        message_text,
         bot_response=answer
     )
     
-    channel_data["history"].append(f"Пользователь: {message.content}")
+    author_label = "Система" if message.author.bot else "Пользователь"
+    channel_data["history"].append(f"{author_label}: {message_text}")
     channel_data["history"].append(f"Бот: {answer}")
     
     if len(channel_data["history"]) > MAX_HISTORY * 2:
@@ -433,8 +508,8 @@ async def on_message(message):
         channel_data["human_mode"] = True
         log_message(
             channel_id,
-            bot.user.id,
-            str(bot.user),
+            bot.user.id if bot.user is not None else 0,
+            str(bot.user) if bot.user is not None else "bot",
             "Режим передачи человеку активирован",
             is_human_transfer=True
         )
@@ -449,13 +524,7 @@ async def on_message(message):
 async def clear_history(ctx):
     channel_id = ctx.channel.id
     if channel_id in conversation_histories:
-        conversation_histories[channel_id] = {
-            "history": [],
-            "human_mode": False,
-            "last_message": "",
-            "last_message_time": 0,
-            "last_answer_time": 0
-        }
+        conversation_histories[channel_id] = create_channel_state()
         await ctx.send("✅ История диалога очищена")
     else:
         await ctx.send("История пуста")
