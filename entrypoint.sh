@@ -53,6 +53,8 @@ ignored_role_ids = "$ignored_role_ids"
 
 [ai]
 provider = "groq"
+embedding_model = "${EMBEDDING_MODEL:-BAAI/bge-m3}"
+embedding_model_type = "${EMBEDDING_MODEL_TYPE:-bge}"
 
 [ai.groq]
 api_key = "$GROQ_API_KEY"
@@ -93,6 +95,37 @@ phrases = [
 ]
 EOF
     echo "✅ settings.toml создан"
+fi
+
+echo "🧠 Проверка базы знаний ChromaDB..."
+index_signature_file="chroma_db/.index_signature"
+current_signature=$(python - <<'PY'
+import hashlib
+from pathlib import Path
+
+parts = []
+for filename in ["indexer.py", "config.py", "settings.toml", "requirements.txt"]:
+    path = Path(filename)
+    if path.exists():
+        parts.append(path.read_bytes())
+
+digest = hashlib.sha256(b"\n---file---\n".join(parts)).hexdigest()
+print(digest)
+PY
+)
+
+stored_signature=""
+if [ -f "$index_signature_file" ]; then
+    stored_signature=$(cat "$index_signature_file")
+fi
+
+if [ ! -f "chroma_db/chroma.sqlite3" ] || [ "$current_signature" != "$stored_signature" ]; then
+    echo "🔄 База знаний отсутствует или устарела, запускаю индексацию..."
+    RUN_INDEXER_TESTS=0 python indexer.py
+    echo "$current_signature" > "$index_signature_file"
+    echo "✅ База знаний обновлена"
+else
+    echo "✅ База знаний актуальна"
 fi
 
 echo "🚀 Запуск бота..."

@@ -3,6 +3,11 @@ from sentence_transformers import SentenceTransformer
 import json
 import shutil
 import os
+import sys
+
+reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
+if reconfigure_stdout:
+    reconfigure_stdout(encoding="utf-8")
 
 import config
 
@@ -1335,10 +1340,6 @@ print("\nСтатистика по категориям:")
 for cat, count in sorted(categories.items()):
     print(f"   {cat}: {count}")
 
-print("\n" + "="*60)
-print("ТЕСТОВЫЙ ПОИСК")
-print("="*60)
-
 def search_query(query_text, top_k=3):
     query_embedding = embedder.encode(format_embedding_text(query_text, "query")).tolist()
     results = collection.query(
@@ -1356,45 +1357,50 @@ def format_result(doc, meta):
     lines.append(doc)
     return "\n".join(lines)
 
-test_queries = [
-    "не заходит на сервер connection timed out",
-    "большой пинг что делать",
-    "не прошел проверку на бота",
-    "кикнуло во время пвп пропали вещи",
-    "донат не пришел после оплаты",
-    "как оплатить из украины",
-    "какой донат есть на сервере",
-    "какие крафты есть на сервере",
-    "ежедневные квесты как получить шарды",
-    "как работают спавнеры разгон",
-    "что такое венки и как получить ключ",
-    "как создать клан или команду",
-    "что сохранится при вайпе",
-    "какие ивенты бывают",
-    "как работает скупщик",
-    "что такое копилка",
-    "как пользоваться /order",
-    "как заприватить свою базу",
-    "какие чары есть на сервере",
-    "голосовой чат как подключить",
-    "рандомный телепорт как тпнуться",
-    "данжи где найти",
-    "дуэли как подраться",
-    "топы где смотреть",
-    "измененные механики майнкрафта",
-    "авто шахты как открыть адскую",
-]
+if os.environ.get("RUN_INDEXER_TESTS") == "1":
+    print("\n" + "="*60)
+    print("ТЕСТОВЫЙ ПОИСК")
+    print("="*60)
 
-for query in test_queries:
-    print(f"\nЗапрос: '{query}'")
-    print("=" * 60)
-    results = search_query(query, top_k=2)
-    docs = results.get("documents") or []
-    metas = results.get("metadatas") or []
-    if docs and docs[0]:
-        for i, (doc, meta) in enumerate(zip(docs[0], metas[0])):
-            print(f"\n--- Результат {i+1} ---")
-            print(format_result(doc, meta))
+    test_queries = [
+        "не заходит на сервер connection timed out",
+        "большой пинг что делать",
+        "не прошел проверку на бота",
+        "кикнуло во время пвп пропали вещи",
+        "донат не пришел после оплаты",
+        "как оплатить из украины",
+        "какой донат есть на сервере",
+        "какие крафты есть на сервере",
+        "ежедневные квесты как получить шарды",
+        "как работают спавнеры разгон",
+        "что такое венки и как получить ключ",
+        "как создать клан или команду",
+        "что сохранится при вайпе",
+        "какие ивенты бывают",
+        "как работает скупщик",
+        "что такое копилка",
+        "как пользоваться /order",
+        "как заприватить свою базу",
+        "какие чары есть на сервере",
+        "голосовой чат как подключить",
+        "рандомный телепорт как тпнуться",
+        "данжи где найти",
+        "дуэли как подраться",
+        "топы где смотреть",
+        "измененные механики майнкрафта",
+        "авто шахты как открыть адскую",
+    ]
+
+    for query in test_queries:
+        print(f"\nЗапрос: '{query}'")
+        print("=" * 60)
+        results = search_query(query, top_k=2)
+        docs = results.get("documents") or []
+        metas = results.get("metadatas") or []
+        if docs and docs[0]:
+            for i, (doc, meta) in enumerate(zip(docs[0], metas[0])):
+                print(f"\n--- Результат {i+1} ---")
+                print(format_result(doc, meta))
 
 print("\n" + "="*60)
 print("Индексация завершена успешно!")
