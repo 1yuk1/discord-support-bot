@@ -313,23 +313,23 @@ def should_use_message_as_question(message):
 
 
 def extract_message_text(message):
+    parts = []
     content = (message.content or "").strip()
     if content:
-        return content
+        parts.append(content)
 
-    embed_parts = []
     for embed in message.embeds:
         if embed.title:
-            embed_parts.append(embed.title.strip())
+            parts.append(embed.title.strip())
         if embed.description:
-            embed_parts.append(embed.description.strip())
+            parts.append(embed.description.strip())
         for field in embed.fields:
             field_text = " ".join(part for part in [field.name, field.value] if part)
             field_text = field_text.strip()
             if field_text:
-                embed_parts.append(field_text)
+                parts.append(field_text)
 
-    return "\n".join(part for part in embed_parts if part).strip()
+    return "\n".join(part for part in parts if part).strip()
 
 def check_bot_has_role(guild):
     if BOT_ROLE_ID in (None, 0):

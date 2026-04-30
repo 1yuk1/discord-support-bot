@@ -27,6 +27,9 @@ fi
 
 if [ ! -f "settings.toml" ]; then
     echo "⚙️ Создание settings.toml..."
+
+    ticket_category_ids="${TICKET_CATEGORY_IDS:-${TICKET_CATEGORY_ID:-0}}"
+    ignored_role_ids="${IGNORED_ROLE_IDS:-0}"
     
     # Проверка обязательных переменных
     if [ -z "$DISCORD_TOKEN" ] || [ "$DISCORD_TOKEN" = "YOUR_DISCORD_TOKEN" ]; then
@@ -44,7 +47,9 @@ if [ ! -f "settings.toml" ]; then
 [discord]
 token = "$DISCORD_TOKEN"
 ticket_category_id = ${TICKET_CATEGORY_ID:-0}
+ticket_category_ids = "$ticket_category_ids"
 bot_role_id = ${BOT_ROLE_ID:-0}
+ignored_role_ids = "$ignored_role_ids"
 
 [ai]
 provider = "groq"
