@@ -19,10 +19,39 @@ def _load_config() -> dict:
 
 _cfg = _load_config()
 
+
+def _parse_id_list(value) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, int):
+        return [value] if value != 0 else []
+    if isinstance(value, list):
+        result = []
+        for item in value:
+            if isinstance(item, int) and item != 0:
+                result.append(item)
+            elif isinstance(item, str):
+                stripped = item.strip()
+                if stripped and stripped != "0":
+                    result.append(int(stripped))
+        return result
+    if isinstance(value, str):
+        result = []
+        for item in value.split(","):
+            stripped = item.strip()
+            if stripped and stripped != "0":
+                result.append(int(stripped))
+        return result
+    return []
+
 # ── Discord ──────────────────────────────────────────────────────────────────
 DISCORD_TOKEN: str = _cfg["discord"]["token"]
 TICKET_CATEGORY_ID: int | None = _cfg["discord"].get("ticket_category_id")
+TICKET_CATEGORY_IDS: list[int] = _parse_id_list(
+    _cfg["discord"].get("ticket_category_ids", TICKET_CATEGORY_ID)
+)
 BOT_ROLE_ID: int | None = _cfg["discord"].get("bot_role_id")
+IGNORED_ROLE_IDS: list[int] = _parse_id_list(_cfg["discord"].get("ignored_role_ids"))
 
 # ── AI ───────────────────────────────────────────────────────────────────────
 AI_PROVIDER: str = _cfg["ai"]["provider"]
