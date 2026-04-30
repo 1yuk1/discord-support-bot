@@ -10,6 +10,7 @@ from groq import Groq
 import chromadb
 from sentence_transformers import SentenceTransformer
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from collections import deque
@@ -18,6 +19,7 @@ import httpx
 import aiohttp
 from openai import OpenAI
 from typing import Any
+from logging.handlers import RotatingFileHandler
 
 import config
 
@@ -57,6 +59,56 @@ RATE_WINDOW = config.RATE_WINDOW
 
 
 # ==============================================================================
+# ЛОГИ ДЛЯ РАЗРАБОТЧИКОВ
+# ==============================================================================
+Path(LOGS_PATH).mkdir(parents=True, exist_ok=True)
+
+
+def setup_logger():
+    logger = logging.getLogger("discord_support_bot")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+
+    file_handler = RotatingFileHandler(
+        Path(LOGS_PATH) / "developer.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8"
+    )
+    file_handler.setFormatter(formatter)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+
+logger = setup_logger()
+
+
+def log_exception(message, exc, **context):
+    context_text = ""
+    if context:
+        context_text = " | " + " | ".join(f"{key}={value}" for key, value in context.items())
+    logger.error(
+        "%s%s | exception=%s: %s",
+        message,
+        context_text,
+        exc.__class__.__name__,
+        exc,
+        exc_info=(type(exc), exc, exc.__traceback__)
+    )
+
+
+# ==============================================================================
 # НАСТРОЙКА ПРОКСИ И AI КЛИЕНТОВ
 # ==============================================================================
 def get_proxy_url():
@@ -77,10 +129,10 @@ groq_client: Any = None
 openai_client: Any = None
 
 if AI_PROVIDER == "groq":
-    print(f"🤖 AI провайдер: Groq (модель: {GROQ_MODEL})")
+    logger.info("AI провайдер: Groq (модель: %s)", GROQ_MODEL)
     if USE_PROXY:
         proxy_url = get_proxy_url()
-        print(f"🔄 Groq будет использовать прокси: {PROXY_HOST}:{PROXY_PORT}")
+        logger.info("Groq будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
         http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
         groq_client = Groq(api_key=GROQ_API_KEY, http_client=http_client)
     else:
@@ -88,12 +140,12 @@ if AI_PROVIDER == "groq":
     openai_client = None
 
 elif AI_PROVIDER == "openrouter":
-    print(f"🤖 AI провайдер: OpenRouter (модель: {OPENROUTER_MODEL})")
+    logger.info("AI провайдер: OpenRouter (модель: %s)", OPENROUTER_MODEL)
     if not OPENROUTER_API_KEY:
-        print("❌ OpenRouter API key не указан в settings.toml")
+        logger.error("OpenRouter API key не указан в settings.toml")
         exit()
     if not OPENROUTER_MODEL:
-        print("❌ OpenRouter model не указана в settings.toml")
+        logger.error("OpenRouter model не указана в settings.toml")
         exit()
 
     default_headers = {}
@@ -104,7 +156,7 @@ elif AI_PROVIDER == "openrouter":
 
     if USE_PROXY:
         proxy_url = get_proxy_url()
-        print(f"🔄 OpenRouter будет использовать прокси: {PROXY_HOST}:{PROXY_PORT}")
+        logger.info("OpenRouter будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
         http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
         openai_client = OpenAI(
             api_key=OPENROUTER_API_KEY,
@@ -121,7 +173,7 @@ elif AI_PROVIDER == "openrouter":
     groq_client = None
 
 elif AI_PROVIDER == "local":
-    print(f"🤖 AI провайдер: Локальная модель (URL: {LOCAL_API_URL}, модель: {LOCAL_MODEL})")
+    logger.info("AI провайдер: Локальная модель (URL: %s, модель: %s)", LOCAL_API_URL, LOCAL_MODEL)
     openai_client = OpenAI(
         api_key=LOCAL_API_KEY,
         base_url=LOCAL_API_URL
@@ -129,40 +181,42 @@ elif AI_PROVIDER == "local":
     groq_client = None
 
 else:
-    print(f"❌ Неизвестный AI_PROVIDER: {AI_PROVIDER}")
+    logger.error("Неизвестный AI_PROVIDER: %s", AI_PROVIDER)
     exit()
 
 # ==============================================================================
 # ПОДКЛЮЧЕНИЕ К БАЗЕ ЗНАНИЙ (ChromaDB)
 # ==============================================================================
-print(f"🔍 Подключение к базе данных в папке: {os.path.abspath(DB_PATH)}...")
+logger.info("Подключение к базе данных в папке: %s", os.path.abspath(DB_PATH))
 
 try:
     client = chromadb.PersistentClient(path=DB_PATH)
     collections = client.list_collections()
     if not collections:
-        print("❌ Ошибка: В базе нет коллекций!")
+        logger.error("В ChromaDB нет коллекций")
         exit()
 
     collection_name = collections[0].name
     collection = client.get_collection(collection_name)
-    print(f"✅ База подключена. Коллекция: {collection_name}")
+    logger.info("База подключена. Коллекция: %s", collection_name)
 
 except Exception as e:
-    print(f"❌ Ошибка подключения к ChromaDB: {e}")
+    log_exception("Ошибка подключения к ChromaDB", e, db_path=os.path.abspath(DB_PATH))
     exit()
 
 # ==============================================================================
 # ЗАГРУЗКА МОДЕЛИ ДЛЯ ЭМБЕДДИНГОВ
 # ==============================================================================
-print("⬇️ Загрузка модели для поиска...")
-embedder = SentenceTransformer(EMBEDDING_MODEL, cache_folder=MODEL_CACHE_PATH)
+logger.info("Загрузка модели для поиска: %s", EMBEDDING_MODEL)
+try:
+    embedder = SentenceTransformer(EMBEDDING_MODEL, cache_folder=MODEL_CACHE_PATH)
+except Exception as e:
+    log_exception("Ошибка загрузки модели эмбеддингов", e, model=EMBEDDING_MODEL, cache=MODEL_CACHE_PATH)
+    exit()
 
 # ==============================================================================
 # ЛОГИРОВАНИЕ
 # ==============================================================================
-Path(LOGS_PATH).mkdir(parents=True, exist_ok=True)
-
 def get_log_filename(channel_id):
     date_str = datetime.now().strftime("%Y-%m-%d")
     return f"{LOGS_PATH}/ticket_{channel_id}_{date_str}.json"
@@ -173,14 +227,18 @@ def load_ticket_log(channel_id):
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except Exception as e:
+            log_exception("Не удалось прочитать лог тикета", e, channel_id=channel_id, file=filename)
             return []
     return []
 
 def save_ticket_log(channel_id, log_data):
     filename = get_log_filename(channel_id)
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(log_data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(log_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log_exception("Не удалось сохранить лог тикета", e, channel_id=channel_id, file=filename)
 
 def log_message(channel_id, user_id, username, message, bot_response=None, is_human_transfer=False):
     log_entry = {
@@ -200,13 +258,17 @@ def log_message(channel_id, user_id, username, message, bot_response=None, is_hu
 # ФУНКЦИИ AI
 # ==============================================================================
 def search_knowledge(query):
-    query_embedding = embedder.encode(format_embedding_text(query, "query")).tolist()
+    try:
+        query_embedding = embedder.encode(format_embedding_text(query, "query")).tolist()
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=3,
-        include=["documents", "metadatas"]
-    )
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=3,
+            include=["documents", "metadatas"]
+        )
+    except Exception as e:
+        log_exception("Ошибка поиска в ChromaDB", e, query_preview=query[:200])
+        raise
 
     context_parts = []
     docs_list = results.get('documents') or [[]]
@@ -222,7 +284,10 @@ def search_knowledge(query):
     return "\n\n".join(context_parts)
 
 def generate_answer(user_input, conversation_history):
-    context = search_knowledge(user_input)
+    try:
+        context = search_knowledge(user_input)
+    except Exception:
+        return "⚠️ Произошла ошибка. Попробуйте ещё раз."
     history_text = "\n".join(conversation_history) if conversation_history else "Нет предыдущих сообщений"
 
     system_instruction = """Ты — опытный агент поддержки SinusSMP.
@@ -312,6 +377,13 @@ def generate_answer(user_input, conversation_history):
 
     except Exception as e:
         error_msg = str(e)
+        log_exception(
+            "Ошибка генерации ответа AI",
+            e,
+            provider=AI_PROVIDER,
+            model=GROQ_MODEL if AI_PROVIDER == "groq" else OPENROUTER_MODEL if AI_PROVIDER == "openrouter" else LOCAL_MODEL,
+            user_input_preview=user_input[:200]
+        )
         if "429" in error_msg or "rate_limit" in error_msg.lower():
             return "⚠️ Временная перегрузка сервиса. Попробуйте через минуту."
         elif "connection" in error_msg.lower() or "connect" in error_msg.lower():
@@ -337,7 +409,7 @@ if USE_PROXY:
     else:
         proxy_url_for_discord = proxy_url
     bot = commands.Bot(command_prefix='!', intents=intents, proxy=proxy_url_for_discord, proxy_auth=proxy_auth)
-    print(f"🔗 Discord прокси настроен: {PROXY_HOST}:{PROXY_PORT}")
+    logger.info("Discord прокси настроен: %s:%s", PROXY_HOST, PROXY_PORT)
 else:
     bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -447,21 +519,60 @@ def is_human_transfer(text):
     text_lower = text.lower()
     return any(phrase in text_lower for phrase in HUMAN_TRANSFER_PHRASES)
 
+
+async def safe_send(channel, content):
+    try:
+        return await channel.send(content)
+    except Exception as e:
+        log_exception(
+            "Ошибка отправки сообщения в Discord",
+            e,
+            channel_id=getattr(channel, "id", "unknown"),
+            content_preview=str(content)[:200]
+        )
+        return None
+
 @bot.event
 async def on_ready():
-    print(f'✅ Бот запущен: {bot.user}')
+    logger.info("Бот запущен: %s", bot.user)
     if bot.user is not None:
-        print(f'ID бота: {bot.user.id}')
+        logger.info("ID бота: %s", bot.user.id)
     if TICKET_CATEGORY_IDS:
-        print(f'📂 Категории тикетов: {sorted(TICKET_CATEGORY_IDS)}')
+        logger.info("Категории тикетов: %s", sorted(TICKET_CATEGORY_IDS))
     else:
-        print('📂 Категории тикетов: все категории')
+        logger.info("Категории тикетов: все категории")
     if IGNORED_ROLE_IDS:
-        print(f'🚫 Игнорируемые роли: {sorted(IGNORED_ROLE_IDS)}')
-    print('─────────────────────────')
+        logger.info("Игнорируемые роли: %s", sorted(IGNORED_ROLE_IDS))
+    logger.info("─────────────────────────")
+
+
+@bot.event
+async def on_error(event_method, *args, **kwargs):
+    logger.exception("Необработанная ошибка Discord event: %s", event_method)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        return
+    log_exception(
+        "Ошибка выполнения команды Discord",
+        error,
+        command=getattr(ctx.command, "qualified_name", "unknown"),
+        channel_id=getattr(ctx.channel, "id", "unknown"),
+        author=str(getattr(ctx, "author", "unknown"))
+    )
 
 @bot.event
 async def on_message(message):
+    logger.info(
+        "Discord message received | channel_id=%s | author=%s | author_bot=%s | message_id=%s",
+        getattr(message.channel, "id", "unknown"),
+        message.author,
+        message.author.bot,
+        message.id
+    )
+
     if not is_ticket_channel(message.channel):
         await bot.process_commands(message)
         return
@@ -487,6 +598,12 @@ async def on_message(message):
     message_text = extract_message_text(message)
     if not message_text:
         return
+    logger.info(
+        "Discord message text | channel_id=%s | author=%s | text_preview=%s",
+        channel_id,
+        message.author,
+        message_text[:300].replace("\n", " ")
+    )
 
     channel_data["processed_message_ids"].add(message.id)
     if len(channel_data["processed_message_ids"]) > 200:
@@ -502,7 +619,7 @@ async def on_message(message):
         channel_data["user_messages"] = user_times
 
         if len(user_times) > 3:
-            await message.channel.send("⏳ Не флудите! Подождите перед следующим вопросом.")
+            await safe_send(message.channel, "⏳ Не флудите! Подождите перед следующим вопросом.")
             return
     
     log_message(
@@ -520,11 +637,11 @@ async def on_message(message):
     
     cooldown_remaining = check_channel_cooldown(channel_data)
     if cooldown_remaining > 0:
-        await message.channel.send(f"⏳ Подождите {cooldown_remaining} секунд перед следующим вопросом.")
+        await safe_send(message.channel, f"⏳ Подождите {cooldown_remaining} секунд перед следующим вопросом.")
         return
     
     if not check_rate_limit():
-        await message.channel.send("⏳ Слишком много сообщений. Подожди минуту.")
+        await safe_send(message.channel, "⏳ Слишком много сообщений. Подожди минуту.")
         return
     
     if not check_bot_has_role(message.guild):
@@ -533,7 +650,7 @@ async def on_message(message):
     # Проверка: если игрок просит перевести на человека
     if is_human_transfer(message_text):
         transfer_answer = "Я передам ваш тикет старшему специалисту. Пожалуйста, ожидайте, в ближайшее свободное время вам ответят."
-        await message.channel.send(transfer_answer)
+        await safe_send(message.channel, transfer_answer)
         
         channel_data["last_message"] = message_text
         channel_data["last_message_time"] = time.time()
@@ -558,8 +675,15 @@ async def on_message(message):
 
     async with message.channel.typing():
         answer = generate_answer(message_text, channel_data["history"])
+    if answer and answer.startswith("⚠️"):
+        logger.warning(
+            "Пользователю отправлен безопасный текст ошибки | channel_id=%s | user_message_preview=%s | bot_answer=%s",
+            channel_id,
+            message_text[:200].replace("\n", " "),
+            answer
+        )
     
-    await message.channel.send(answer)
+    await safe_send(message.channel, answer)
     
     channel_data["last_message"] = message_text
     channel_data["last_message_time"] = time.time()
@@ -604,9 +728,9 @@ async def clear_history(ctx):
     channel_id = ctx.channel.id
     if channel_id in conversation_histories:
         conversation_histories[channel_id] = create_channel_state()
-        await ctx.send("✅ История диалога очищена")
+        await safe_send(ctx.channel, "✅ История диалога очищена")
     else:
-        await ctx.send("История пуста")
+        await safe_send(ctx.channel, "История пуста")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -614,20 +738,24 @@ async def resume_bot(ctx):
     channel_id = ctx.channel.id
     if channel_id in conversation_histories:
         conversation_histories[channel_id]["human_mode"] = False
-        await ctx.send("✅ Бот возобновил работу")
+        await safe_send(ctx.channel, "✅ Бот возобновил работу")
     else:
-        await ctx.send("Нет данных о канале")
+        await safe_send(ctx.channel, "Нет данных о канале")
 
 @bot.command()
 async def ping(ctx):
-    await ctx.send(f"Pong! Задержка: {round(bot.latency * 1000)}ms")
+    await safe_send(ctx.channel, f"Pong! Задержка: {round(bot.latency * 1000)}ms")
 
 # ==============================================================================
 # ЗАПУСК
 # ==============================================================================
 if __name__ == "__main__":
     if USE_PROXY:
-        print(f"🔗 Discord бот будет использовать прокси: {PROXY_HOST}:{PROXY_PORT}")
+        logger.info("Discord бот будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
     else:
-        print("🔗 Discord бот работает без прокси")
-    bot.run(DISCORD_TOKEN)
+        logger.info("Discord бот работает без прокси")
+    try:
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        log_exception("Критическая ошибка запуска Discord бота", e)
+        raise
