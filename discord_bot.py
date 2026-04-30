@@ -26,6 +26,7 @@ import config
 # Краткие алиасы из config
 DISCORD_TOKEN = config.DISCORD_TOKEN
 AI_PROVIDER = config.AI_PROVIDER
+SETTINGS_PATH = config.SETTINGS_PATH
 GROQ_API_KEY = config.GROQ_API_KEY
 GROQ_MODEL = config.GROQ_MODEL
 OPENROUTER_API_KEY = config.OPENROUTER_API_KEY
@@ -106,6 +107,57 @@ def log_exception(message, exc, **context):
         exc,
         exc_info=(type(exc), exc, exc.__traceback__)
     )
+
+
+RUNTIME_MODELS = {
+    "groq": GROQ_MODEL,
+    "openrouter": OPENROUTER_MODEL,
+    "local": LOCAL_MODEL,
+}
+
+
+def get_current_model():
+    return RUNTIME_MODELS.get(AI_PROVIDER, "")
+
+
+def set_current_model(model_name):
+    RUNTIME_MODELS[AI_PROVIDER] = model_name
+
+
+def save_model_to_settings(provider, model_name):
+    section_header = f"[ai.{provider}]"
+    with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    in_section = False
+    section_found = False
+    model_updated = False
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not model_updated:
+                lines.insert(index, f'model = "{model_name}"\n')
+                model_updated = True
+                break
+            in_section = stripped == section_header
+            section_found = section_found or in_section
+            continue
+
+        if in_section and stripped.startswith("model ="):
+            lines[index] = f'model = "{model_name}"\n'
+            model_updated = True
+            break
+
+    if in_section and not model_updated:
+        lines.append(f'model = "{model_name}"\n')
+        model_updated = True
+
+    if not section_found:
+        raise ValueError(f"Секция {section_header} не найдена в settings.toml")
+
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+        f.writelines(lines)
 
 
 # ==============================================================================
@@ -346,11 +398,12 @@ def generate_answer(user_input, conversation_history):
         {"role": "system", "content": system_instruction},
         {"role": "user", "content": user_message}
     ]
+    current_model = get_current_model()
 
     try:
         if AI_PROVIDER == "groq":
             response = groq_client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=current_model,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1024
@@ -359,7 +412,7 @@ def generate_answer(user_input, conversation_history):
 
         elif AI_PROVIDER == "openrouter":
             response = openai_client.chat.completions.create(
-                model=OPENROUTER_MODEL,
+                model=current_model,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1024
@@ -368,7 +421,7 @@ def generate_answer(user_input, conversation_history):
 
         elif AI_PROVIDER == "local":
             response = openai_client.chat.completions.create(
-                model=LOCAL_MODEL,
+                model=current_model,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=1024
@@ -381,7 +434,7 @@ def generate_answer(user_input, conversation_history):
             "Ошибка генерации ответа AI",
             e,
             provider=AI_PROVIDER,
-            model=GROQ_MODEL if AI_PROVIDER == "groq" else OPENROUTER_MODEL if AI_PROVIDER == "openrouter" else LOCAL_MODEL,
+            model=current_model,
             user_input_preview=user_input[:200]
         )
         if "429" in error_msg or "rate_limit" in error_msg.lower():
@@ -741,6 +794,75 @@ async def resume_bot(ctx):
         await safe_send(ctx.channel, "✅ Бот возобновил работу")
     else:
         await safe_send(ctx.channel, "Нет данных о канале")
+
+
+@bot.group(invoke_without_command=True)
+@commands.has_permissions(administrator=True)
+async def model(ctx):
+    await safe_send(
+        ctx.channel,
+        f"Текущий provider: {AI_PROVIDER}\nТекущая модель: {get_current_model()}"
+    )
+
+
+@model.command(name="set")
+@commands.has_permissions(administrator=True)
+async def model_set(ctx, *, model_name: str):
+    model_name = model_name.strip()
+    if not model_name:
+        await safe_send(ctx.channel, "Укажите модель: !model set <model_name>")
+        return
+
+    previous_model = get_current_model()
+    set_current_model(model_name)
+    logger.info(
+        "Модель обновлена в runtime | provider=%s | previous=%s | current=%s | author=%s",
+        AI_PROVIDER,
+        previous_model,
+        model_name,
+        ctx.author
+    )
+    await safe_send(
+        ctx.channel,
+        f"✅ Модель применена без рестарта.\nProvider: {AI_PROVIDER}\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
+    )
+
+
+@model.command(name="save")
+@commands.has_permissions(administrator=True)
+async def model_save(ctx, *, model_name: str):
+    model_name = model_name.strip()
+    if not model_name:
+        await safe_send(ctx.channel, "Укажите модель: !model save <model_name>")
+        return
+
+    previous_model = get_current_model()
+    try:
+        set_current_model(model_name)
+        save_model_to_settings(AI_PROVIDER, model_name)
+    except Exception as e:
+        set_current_model(previous_model)
+        log_exception(
+            "Не удалось сохранить модель в settings.toml",
+            e,
+            provider=AI_PROVIDER,
+            requested_model=model_name,
+            author=str(ctx.author)
+        )
+        await safe_send(ctx.channel, "⚠️ Не удалось сохранить модель. Подробности есть в консоли.")
+        return
+
+    logger.info(
+        "Модель сохранена в settings.toml | provider=%s | previous=%s | current=%s | author=%s",
+        AI_PROVIDER,
+        previous_model,
+        model_name,
+        ctx.author
+    )
+    await safe_send(
+        ctx.channel,
+        f"✅ Модель применена и сохранена.\nProvider: {AI_PROVIDER}\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
+    )
 
 @bot.command()
 async def ping(ctx):
