@@ -195,7 +195,10 @@ def generate_answer(user_input, conversation_history):
 
 ВАЖНО — Донат:
 - На сервере доступны только easyDonate и Boosty.
-- Для России используется easyDonate. Донат через easyDonate выдается автоматически.
+- Купить донат можно только на https://sinussmp.ru или через Boosty https://boosty.to/ingrog
+- Никогда не отправляй игрока покупать донат на easyDonate.com, easydonate.com, easydonate.ru или любой другой сайт easyDonate.
+- easyDonate — это платежная система внутри сайта https://sinussmp.ru, а не отдельный магазин доната.
+- Для России используется сайт https://sinussmp.ru: оплата проходит через easyDonate, а донат выдается автоматически.
 - Для другой страны основной вариант — Boosty: https://boosty.to/ingrog
 - Донат через Boosty не выдается автоматически: нужна ручная проверка оплаты и ручная выдача администрацией.
 - Если донат через easyDonate не пришел, сначала проси перезайти на режим, указанный при оплате: lite1, lite2, lite3 или PRAC.
