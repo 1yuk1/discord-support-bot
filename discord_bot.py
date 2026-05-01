@@ -53,8 +53,11 @@ BOT_ROLE_ID = config.BOT_ROLE_ID
 IGNORED_ROLE_IDS = set(config.IGNORED_ROLE_IDS)
 LOGS_PATH = config.LOGS_PATH
 HUMAN_TRANSFER_PHRASES = config.HUMAN_TRANSFER_PHRASES
+RATE_LIMIT_ENABLED = config.RATE_LIMIT_ENABLED
 CHANNEL_COOLDOWN = config.CHANNEL_COOLDOWN
 DUPLICATE_CHECK_TIME = config.DUPLICATE_CHECK_TIME
+USER_MESSAGE_LIMIT = config.USER_MESSAGE_LIMIT
+USER_MESSAGE_WINDOW = config.USER_MESSAGE_WINDOW
 RATE_LIMIT = config.RATE_LIMIT
 RATE_WINDOW = config.RATE_WINDOW
 
@@ -472,6 +475,9 @@ conversation_histories = {}
 global_message_times = deque()
 
 def check_rate_limit():
+    if not RATE_LIMIT_ENABLED or RATE_LIMIT <= 0 or RATE_WINDOW <= 0:
+        return True
+
     global global_message_times
     current_time = time.time()
     
@@ -551,6 +557,9 @@ def check_bot_has_role(guild):
     return False
 
 def check_channel_cooldown(channel_data):
+    if not RATE_LIMIT_ENABLED or CHANNEL_COOLDOWN <= 0:
+        return 0
+
     current_time = time.time()
     last_time = channel_data.get("last_answer_time", 0)
     elapsed = current_time - last_time
@@ -560,6 +569,9 @@ def check_channel_cooldown(channel_data):
     return 0
 
 def check_duplicate_message(channel_data, message_content):
+    if not RATE_LIMIT_ENABLED or DUPLICATE_CHECK_TIME <= 0:
+        return False
+
     current_time = time.time()
     last_msg = channel_data.get("last_message", "")
     last_time = channel_data.get("last_message_time", 0)
@@ -662,16 +674,18 @@ async def on_message(message):
     if len(channel_data["processed_message_ids"]) > 200:
         channel_data["processed_message_ids"] = set(list(channel_data["processed_message_ids"])[-100:])
     
-    if not message.author.bot:
+    transfer_requested = is_human_transfer(message_text)
+
+    if RATE_LIMIT_ENABLED and not transfer_requested and not message.author.bot:
         current_time = time.time()
         user_times = channel_data.get("user_messages", deque())
-        while user_times and current_time - user_times[0] > 10:
+        while user_times and current_time - user_times[0] > USER_MESSAGE_WINDOW:
             user_times.popleft()
 
         user_times.append(current_time)
         channel_data["user_messages"] = user_times
 
-        if len(user_times) > 3:
+        if USER_MESSAGE_LIMIT > 0 and len(user_times) > USER_MESSAGE_LIMIT:
             await safe_send(message.channel, "⏳ Не флудите! Подождите перед следующим вопросом.")
             return
     
@@ -684,24 +698,12 @@ async def on_message(message):
     
     if channel_data["human_mode"]:
         return
-    
-    if check_duplicate_message(channel_data, message_text):
-        return
-    
-    cooldown_remaining = check_channel_cooldown(channel_data)
-    if cooldown_remaining > 0:
-        await safe_send(message.channel, f"⏳ Подождите {cooldown_remaining} секунд перед следующим вопросом.")
-        return
-    
-    if not check_rate_limit():
-        await safe_send(message.channel, "⏳ Слишком много сообщений. Подожди минуту.")
-        return
-    
+
     if not check_bot_has_role(message.guild):
         return
 
-    # Проверка: если игрок просит перевести на человека
-    if is_human_transfer(message_text):
+    # Просьба передать тикет человеку не должна блокироваться рейтлимитами.
+    if transfer_requested:
         transfer_answer = "Я передам ваш тикет старшему специалисту. Пожалуйста, ожидайте, в ближайшее свободное время вам ответят."
         await safe_send(message.channel, transfer_answer)
         
@@ -725,7 +727,19 @@ async def on_message(message):
         if len(channel_data["history"]) > MAX_HISTORY * 2:
             channel_data["history"] = channel_data["history"][-MAX_HISTORY * 2:]
         return
-
+    
+    if check_duplicate_message(channel_data, message_text):
+        return
+    
+    cooldown_remaining = check_channel_cooldown(channel_data)
+    if cooldown_remaining > 0:
+        await safe_send(message.channel, f"⏳ Подождите {cooldown_remaining} секунд перед следующим вопросом.")
+        return
+    
+    if not check_rate_limit():
+        await safe_send(message.channel, "⏳ Слишком много сообщений. Подожди минуту.")
+        return
+    
     async with message.channel.typing():
         answer = generate_answer(message_text, channel_data["history"])
     if answer and answer.startswith("⚠️"):

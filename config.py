@@ -87,11 +87,15 @@ LOGS_PATH: str = str(BASE_DIR / _cfg["paths"]["logs"])
 AUTO_UPDATE_CHROMA_DB: bool = _cfg["paths"].get("auto_update_chroma_db", True)
 
 # ── Rate Limit ───────────────────────────────────────────────────────────────
-RATE_LIMIT: int = _cfg["rate_limit"]["global_limit"]
-RATE_WINDOW: int = _cfg["rate_limit"]["global_window"]
-CHANNEL_COOLDOWN: int = _cfg["rate_limit"]["channel_cooldown"]
-DUPLICATE_CHECK_TIME: int = _cfg["rate_limit"]["duplicate_check_time"]
-MAX_HISTORY: int = _cfg["rate_limit"]["max_history"]
+_rate_limit_cfg = _cfg.get("rate_limit", {})
+RATE_LIMIT_ENABLED: bool = _rate_limit_cfg.get("enabled", True)
+RATE_LIMIT: int = _rate_limit_cfg.get("global_limit", 30)
+RATE_WINDOW: int = _rate_limit_cfg.get("global_window", 60)
+CHANNEL_COOLDOWN: int = _rate_limit_cfg.get("channel_cooldown", 5)
+DUPLICATE_CHECK_TIME: int = _rate_limit_cfg.get("duplicate_check_time", 5)
+USER_MESSAGE_LIMIT: int = _rate_limit_cfg.get("user_message_limit", 3)
+USER_MESSAGE_WINDOW: int = _rate_limit_cfg.get("user_message_window", 10)
+MAX_HISTORY: int = _rate_limit_cfg.get("max_history", 6)
 
 # ── Transfer ─────────────────────────────────────────────────────────────────
 HUMAN_TRANSFER_PHRASES: list[str] = _cfg["transfer"]["phrases"]

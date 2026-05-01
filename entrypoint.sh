@@ -78,10 +78,13 @@ database = "chroma_db"
 logs = "logs"
 
 [rate_limit]
-global_limit = 30
-global_window = 60
-channel_cooldown = 5
-duplicate_check_time = 5
+enabled = ${RATE_LIMIT_ENABLED:-true}
+global_limit = ${RATE_LIMIT_GLOBAL_LIMIT:-30}
+global_window = ${RATE_LIMIT_GLOBAL_WINDOW:-60}
+channel_cooldown = ${RATE_LIMIT_CHANNEL_COOLDOWN:-5}
+duplicate_check_time = ${RATE_LIMIT_DUPLICATE_CHECK_TIME:-5}
+user_message_limit = ${RATE_LIMIT_USER_MESSAGE_LIMIT:-3}
+user_message_window = ${RATE_LIMIT_USER_MESSAGE_WINDOW:-10}
 max_history = 6
 
 [transfer]

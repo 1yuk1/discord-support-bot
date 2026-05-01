@@ -43,10 +43,13 @@ logs = "logs"
 auto_update_chroma_db = true
 
 [rate_limit]
+enabled = true
 global_limit = 30
 global_window = 60
 channel_cooldown = 5
 duplicate_check_time = 5
+user_message_limit = 3
+user_message_window = 10
 max_history = 6
 
 [transfer]
