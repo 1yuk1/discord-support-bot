@@ -12,6 +12,7 @@ ignored_role_ids = "0"
 provider = "groq"
 embedding_model = "BAAI/bge-m3"
 embedding_model_type = "bge"
+search_top_k = 2
 
 [ai.groq]
 api_key = "YOUR_GROQ_API_KEY"

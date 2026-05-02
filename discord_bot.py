@@ -39,6 +39,7 @@ LOCAL_API_KEY = config.LOCAL_API_KEY
 LOCAL_MODEL = config.LOCAL_MODEL
 EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
+SEARCH_TOP_K = config.SEARCH_TOP_K
 USE_PROXY = config.USE_PROXY
 PROXY_HOST = config.PROXY_HOST
 PROXY_PORT = config.PROXY_PORT
@@ -318,7 +319,7 @@ def search_knowledge(query):
 
         results = collection.query(
             query_embeddings=[query_embedding],
-            n_results=3,
+            n_results=SEARCH_TOP_K,
             include=["documents", "metadatas"]
         )
     except Exception as e:
