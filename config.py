@@ -51,6 +51,9 @@ TICKET_CATEGORY_IDS: list[int] = _parse_id_list(
     _cfg["discord"].get("ticket_category_ids", TICKET_CATEGORY_ID)
 )
 BOT_ROLE_ID: int | None = _cfg["discord"].get("bot_role_id")
+BOT_ROLE_IDS: list[int] = _parse_id_list(
+    _cfg["discord"].get("bot_role_ids", BOT_ROLE_ID)
+)
 IGNORED_ROLE_IDS: list[int] = _parse_id_list(_cfg["discord"].get("ignored_role_ids"))
 
 # ── AI ───────────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ token = "YOUR_DISCORD_TOKEN"
 ticket_category_id = 0
 ticket_category_ids = "0"
 bot_role_id = 0
+bot_role_ids = "0"
 ignored_role_ids = "0"
 
 [ai]

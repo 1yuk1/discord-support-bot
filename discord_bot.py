@@ -51,6 +51,7 @@ MAX_HISTORY = config.MAX_HISTORY
 TICKET_CATEGORY_ID = config.TICKET_CATEGORY_ID
 TICKET_CATEGORY_IDS = set(config.TICKET_CATEGORY_IDS)
 BOT_ROLE_ID = config.BOT_ROLE_ID
+BOT_ROLE_IDS = set(config.BOT_ROLE_IDS)
 IGNORED_ROLE_IDS = set(config.IGNORED_ROLE_IDS)
 LOGS_PATH = config.LOGS_PATH
 HUMAN_TRANSFER_PHRASES = config.HUMAN_TRANSFER_PHRASES
@@ -551,7 +552,7 @@ def extract_message_text(message):
     return "\n".join(part for part in parts if part).strip()
 
 def check_bot_has_role(guild):
-    if BOT_ROLE_ID in (None, 0):
+    if not BOT_ROLE_IDS:
         return True
     if guild is None or bot.user is None:
         return False
@@ -560,10 +561,7 @@ def check_bot_has_role(guild):
     if bot_member is None:
         return False
     
-    for role in bot_member.roles:
-        if role.id == BOT_ROLE_ID:
-            return True
-    return False
+    return any(role.id in BOT_ROLE_IDS for role in bot_member.roles)
 
 def check_channel_cooldown(channel_data):
     if not RATE_LIMIT_ENABLED or CHANNEL_COOLDOWN <= 0:
@@ -615,6 +613,8 @@ async def on_ready():
         logger.info("Категории тикетов: %s", sorted(TICKET_CATEGORY_IDS))
     else:
         logger.info("Категории тикетов: все категории")
+    if BOT_ROLE_IDS:
+        logger.info("Bot role ids: %s", sorted(BOT_ROLE_IDS))
     if IGNORED_ROLE_IDS:
         logger.info("Игнорируемые роли: %s", sorted(IGNORED_ROLE_IDS))
     logger.info("─────────────────────────")
