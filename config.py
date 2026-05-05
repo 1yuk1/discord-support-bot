@@ -55,6 +55,11 @@ BOT_ROLE_IDS: list[int] = _parse_id_list(
     _cfg["discord"].get("bot_role_ids", BOT_ROLE_ID)
 )
 IGNORED_ROLE_IDS: list[int] = _parse_id_list(_cfg["discord"].get("ignored_role_ids"))
+DEFAULT_REPLY_FOOTER = (
+    "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. "
+    "Чтобы позвать человека, напишите: позови человека"
+)
+BOT_REPLY_FOOTER: str = _cfg["discord"].get("reply_footer", DEFAULT_REPLY_FOOTER)
 
 # ── AI ───────────────────────────────────────────────────────────────────────
 AI_PROVIDER: str = _cfg["ai"]["provider"]

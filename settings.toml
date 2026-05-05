@@ -8,6 +8,7 @@ ticket_category_ids = "0"
 bot_role_id = 0
 bot_role_ids = "0"
 ignored_role_ids = "0"
+reply_footer = "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. Чтобы позвать человека, напишите: позови человека"
 
 [ai]
 provider = "groq"

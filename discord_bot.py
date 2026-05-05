@@ -62,6 +62,7 @@ USER_MESSAGE_LIMIT = config.USER_MESSAGE_LIMIT
 USER_MESSAGE_WINDOW = config.USER_MESSAGE_WINDOW
 RATE_LIMIT = config.RATE_LIMIT
 RATE_WINDOW = config.RATE_WINDOW
+BOT_REPLY_FOOTER = config.BOT_REPLY_FOOTER
 
 
 # ==============================================================================
@@ -723,9 +724,40 @@ def is_human_transfer(text):
     return any(phrase in text_lower for phrase in HUMAN_TRANSFER_PHRASES)
 
 
+def split_discord_text(text, limit=4096):
+    if len(text) <= limit:
+        return [text]
+
+    chunks = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n", 0, limit)
+        if split_at <= 0:
+            split_at = remaining.rfind(" ", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
 async def safe_send(channel, content):
     try:
-        return await channel.send(content)
+        text = "" if content is None else str(content)
+        footer_text = BOT_REPLY_FOOTER.strip()
+        if not footer_text:
+            return await channel.send(text)
+
+        sent_message = None
+        for chunk in split_discord_text(text):
+            embed = discord.Embed(description=chunk)
+            embed.set_footer(text=footer_text)
+            sent_message = await channel.send(embed=embed)
+        return sent_message
     except Exception as e:
         log_exception(
             "Ошибка отправки сообщения в Discord",
