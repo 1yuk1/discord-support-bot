@@ -724,7 +724,14 @@ def is_human_transfer(text):
     return any(phrase in text_lower for phrase in HUMAN_TRANSFER_PHRASES)
 
 
-def split_discord_text(text, limit=4096):
+def add_reply_footer(text, footer_text):
+    footer_text = footer_text.strip()
+    if not footer_text:
+        return text
+    return f"{text.rstrip()}\n-# {footer_text}"
+
+
+def split_discord_text(text, limit=2000):
     if len(text) <= limit:
         return [text]
 
@@ -748,15 +755,9 @@ def split_discord_text(text, limit=4096):
 async def safe_send(channel, content):
     try:
         text = "" if content is None else str(content)
-        footer_text = BOT_REPLY_FOOTER.strip()
-        if not footer_text:
-            return await channel.send(text)
-
         sent_message = None
-        for chunk in split_discord_text(text):
-            embed = discord.Embed(description=chunk)
-            embed.set_footer(text=footer_text)
-            sent_message = await channel.send(embed=embed)
+        for chunk in split_discord_text(add_reply_footer(text, BOT_REPLY_FOOTER)):
+            sent_message = await channel.send(chunk)
         return sent_message
     except Exception as e:
         log_exception(
