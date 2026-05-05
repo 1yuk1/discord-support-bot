@@ -3,6 +3,7 @@ from sentence_transformers import SentenceTransformer
 import json
 import shutil
 import os
+import re
 import sys
 
 reconfigure_stdout = getattr(sys.stdout, "reconfigure", None)
@@ -18,12 +19,211 @@ EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
 AUTO_UPDATE_CHROMA_DB = config.AUTO_UPDATE_CHROMA_DB
 SEARCH_TOP_K = config.SEARCH_TOP_K
+QUESTS_SUMMARY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quests_summary.md")
 
 
 def format_embedding_text(text, mode):
     if EMBEDDING_MODEL_TYPE == "e5":
         return f"{mode}: {text}"
     return text
+
+
+def normalize_quest_section(raw_section):
+    section = raw_section.strip()
+    if "Обычные квесты" in section:
+        return "Обычные квесты"
+    if "Кастомные квесты" in section:
+        return "Кастомные квесты"
+    return section or "Квесты сервера"
+
+
+def normalize_quest_description(description):
+    description = description.strip()
+    if description.lower().rstrip(".") == "не указано":
+        return ""
+    return description.lstrip("*").strip()
+
+
+def make_quest_display_title(title):
+    if title.lower().startswith("квест"):
+        return title
+    return f"Квест «{title}»"
+
+
+def pluralize_ru(number, one, few, many):
+    if 11 <= number % 100 <= 14:
+        return many
+    if number % 10 == 1:
+        return one
+    if 2 <= number % 10 <= 4:
+        return few
+    return many
+
+
+def format_quest_count(number):
+    return f"{number} {pluralize_ru(number, 'квест', 'квеста', 'квестов')}"
+
+
+def get_quest_title_terms(title, display_title):
+    terms = [title, display_title]
+    quoted_parts = re.findall(r"«([^»]+)»", title)
+    for quoted_part in quoted_parts:
+        terms.append(quoted_part)
+        terms.append(f"квест {quoted_part}")
+    return terms
+
+
+def build_quest_item(quest, sequence_number):
+    title = quest["title"]
+    display_title = make_quest_display_title(title)
+    section = quest.get("section") or "Квесты сервера"
+    description = quest.get("description", "")
+    task = quest.get("task", "")
+
+    search_parts = [
+        *get_quest_title_terms(title, display_title),
+        section,
+        task,
+        description,
+    ]
+
+    full_solution_parts = [f"{display_title} относится к разделу «{section}»."]
+    if description:
+        full_solution_parts.append(f"Описание: {description}")
+    full_solution_parts.append(f"Что нужно выполнить: {task}")
+
+    return {
+        "id": f"server_quest_{sequence_number:03d}",
+        "question": display_title,
+        "synonyms": [part for part in search_parts if part],
+        "category": "server_quests",
+        "priority": "low",
+        "for_llm": {
+            "problem": f"Игрок спрашивает про {display_title}",
+            "diagnostics": [],
+            "quick_answer": f"{display_title}: {task}",
+            "full_solution": " ".join(full_solution_parts),
+            "steps": [
+                f"1. Найдите {display_title} в меню квестов",
+                f"2. Выполните условие: {task}"
+            ],
+            "transfer_to_human": False,
+            "immediate_action": "Подсказать условие выполнения квеста"
+        }
+    }
+
+
+def build_quest_overview_item(quest_count, section_counts):
+    details = []
+    if section_counts.get("Обычные квесты"):
+        details.append(f"{section_counts['Обычные квесты']} обычных")
+    if section_counts.get("Кастомные квесты"):
+        details.append(f"{section_counts['Кастомные квесты']} кастомных")
+
+    count_text = format_quest_count(quest_count)
+    if details:
+        count_text += f": {', '.join(details)}"
+
+    return {
+        "id": "server_quests_overview",
+        "question": "Все квесты на сервере",
+        "synonyms": [
+            "все квесты на сервере",
+            "список квестов",
+            "какие квесты есть",
+            "сколько квестов",
+            "квесты сервера",
+            "обычные квесты",
+            "кастомные квесты",
+        ],
+        "category": "server_quests",
+        "priority": "low",
+        "for_llm": {
+            "problem": "Игрок спрашивает про список квестов на сервере",
+            "diagnostics": [],
+            "quick_answer": f"На сервере есть {count_text}.",
+            "full_solution": (
+                f"На сервере есть {count_text}. Если игрок спрашивает конкретный квест, "
+                "ориентируйтесь на название квеста или условие выполнения."
+            ),
+            "steps": [
+                "1. Если игрок спрашивает общее количество, сообщите количество квестов",
+                "2. Если игрок спрашивает конкретный квест, ответьте условием выполнения из найденного блока"
+            ],
+            "transfer_to_human": False,
+            "immediate_action": "Объяснить сколько квестов есть и уточнить конкретный квест при необходимости"
+        }
+    }
+
+
+def load_quest_items(path=QUESTS_SUMMARY_PATH):
+    if not os.path.exists(path):
+        print(f"Файл квестов не найден, пропускаю: {path}")
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    quests = []
+    current_section = "Квесты сервера"
+    current_quest = None
+
+    def flush_current_quest():
+        nonlocal current_quest
+        if current_quest and current_quest.get("title") and current_quest.get("task"):
+            quests.append(current_quest)
+        current_quest = None
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith("### "):
+            flush_current_quest()
+            current_quest = {
+                "title": line.removeprefix("### ").strip(),
+                "section": current_section,
+                "description": "",
+                "task": "",
+            }
+            continue
+
+        if line.startswith("## "):
+            flush_current_quest()
+            current_section = normalize_quest_section(line.removeprefix("## "))
+            continue
+
+        if current_quest is None:
+            continue
+
+        # Служебные ID из исходного файла намеренно не индексируем.
+        if line.startswith("Внутренний ID") or line.startswith("ID:"):
+            continue
+
+        if line.startswith("Описание:"):
+            current_quest["description"] = normalize_quest_description(line.split(":", 1)[1])
+            continue
+
+        if line.startswith("Что нужно выполнить:"):
+            current_quest["task"] = line.split(":", 1)[1].strip()
+            continue
+
+    flush_current_quest()
+
+    quest_items = [
+        build_quest_item(quest, sequence_number)
+        for sequence_number, quest in enumerate(quests, start=1)
+    ]
+
+    if quest_items:
+        section_counts = {}
+        for quest in quests:
+            section = quest.get("section", "Квесты сервера")
+            section_counts[section] = section_counts.get(section, 0) + 1
+        quest_items.insert(0, build_quest_overview_item(len(quests), section_counts))
+
+    return quest_items
 
 if not AUTO_UPDATE_CHROMA_DB:
     print("Автообновление ChromaDB отключено в settings.toml (paths.auto_update_chroma_db = false).")
@@ -1351,6 +1551,11 @@ knowledge_base = [
         }
     },
 ]
+
+quest_items = load_quest_items()
+if quest_items:
+    knowledge_base.extend(quest_items)
+    print(f"Добавлено квестов из quests_summary.md: {len(quest_items) - 1}")
 
 try:
     existing = collection.get()
