@@ -45,6 +45,17 @@ database = "chroma_db"
 logs = "logs"
 auto_update_chroma_db = true
 
+[logs]
+ticket_filename_template = "{channel_name}-{created_at}"
+ticket_datetime_format = "%d.%m-%H-%M"
+ticket_file_extension = "json"
+archive_enabled = true
+archive_dir = "logs/archives"
+archive_interval_hours = 24
+archive_after_hours = 24
+archive_date_format = "%d.%m"
+archive_filename_template = "tickets-{date}-{count}tickets.zip"
+
 [rate_limit]
 enabled = true
 global_limit = 30

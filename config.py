@@ -95,6 +95,24 @@ DB_PATH: str = str(BASE_DIR / _cfg["paths"]["database"])
 LOGS_PATH: str = str(BASE_DIR / _cfg["paths"]["logs"])
 AUTO_UPDATE_CHROMA_DB: bool = _cfg["paths"].get("auto_update_chroma_db", True)
 
+# ── Ticket logs ──────────────────────────────────────────────────────────────
+_logs_cfg = _cfg.get("logs", {})
+LOG_TICKET_FILENAME_TEMPLATE: str = _logs_cfg.get(
+    "ticket_filename_template",
+    "{channel_name}-{created_at}",
+)
+LOG_TICKET_DATETIME_FORMAT: str = _logs_cfg.get("ticket_datetime_format", "%d.%m-%H-%M")
+LOG_TICKET_FILE_EXTENSION: str = _logs_cfg.get("ticket_file_extension", "json").lstrip(".")
+LOG_ARCHIVE_ENABLED: bool = _logs_cfg.get("archive_enabled", True)
+LOG_ARCHIVE_DIR: str = str(BASE_DIR / _logs_cfg.get("archive_dir", "logs/archives"))
+LOG_ARCHIVE_INTERVAL_HOURS: int = _logs_cfg.get("archive_interval_hours", 24)
+LOG_ARCHIVE_AFTER_HOURS: int = _logs_cfg.get("archive_after_hours", 24)
+LOG_ARCHIVE_DATE_FORMAT: str = _logs_cfg.get("archive_date_format", "%d.%m")
+LOG_ARCHIVE_FILENAME_TEMPLATE: str = _logs_cfg.get(
+    "archive_filename_template",
+    "tickets-{date}-{count}tickets.zip",
+)
+
 # ── Rate Limit ───────────────────────────────────────────────────────────────
 _rate_limit_cfg = _cfg.get("rate_limit", {})
 RATE_LIMIT_ENABLED: bool = _rate_limit_cfg.get("enabled", True)

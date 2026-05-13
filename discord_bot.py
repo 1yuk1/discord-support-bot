@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import asyncio
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from collections import deque
@@ -56,6 +57,15 @@ BOT_ROLE_ID = config.BOT_ROLE_ID
 BOT_ROLE_IDS = set(config.BOT_ROLE_IDS)
 IGNORED_ROLE_IDS = set(config.IGNORED_ROLE_IDS)
 LOGS_PATH = config.LOGS_PATH
+LOG_TICKET_FILENAME_TEMPLATE = config.LOG_TICKET_FILENAME_TEMPLATE
+LOG_TICKET_DATETIME_FORMAT = config.LOG_TICKET_DATETIME_FORMAT
+LOG_TICKET_FILE_EXTENSION = config.LOG_TICKET_FILE_EXTENSION
+LOG_ARCHIVE_ENABLED = config.LOG_ARCHIVE_ENABLED
+LOG_ARCHIVE_DIR = config.LOG_ARCHIVE_DIR
+LOG_ARCHIVE_INTERVAL_HOURS = config.LOG_ARCHIVE_INTERVAL_HOURS
+LOG_ARCHIVE_AFTER_HOURS = config.LOG_ARCHIVE_AFTER_HOURS
+LOG_ARCHIVE_DATE_FORMAT = config.LOG_ARCHIVE_DATE_FORMAT
+LOG_ARCHIVE_FILENAME_TEMPLATE = config.LOG_ARCHIVE_FILENAME_TEMPLATE
 HUMAN_TRANSFER_PHRASES = config.HUMAN_TRANSFER_PHRASES
 RATE_LIMIT_ENABLED = config.RATE_LIMIT_ENABLED
 CHANNEL_COOLDOWN = config.CHANNEL_COOLDOWN
@@ -74,6 +84,7 @@ STATE_TTL_SECONDS = config.STATE_TTL_SECONDS
 # ЛОГИ ДЛЯ РАЗРАБОТЧИКОВ
 # ==============================================================================
 Path(LOGS_PATH).mkdir(parents=True, exist_ok=True)
+Path(LOG_ARCHIVE_DIR).mkdir(parents=True, exist_ok=True)
 
 
 def setup_logger():
@@ -370,32 +381,74 @@ except Exception as e:
 # ==============================================================================
 # ЛОГИРОВАНИЕ
 # ==============================================================================
-def get_log_filename(channel_id):
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    return f"{LOGS_PATH}/ticket_{channel_id}_{date_str}.json"
+_INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
-def load_ticket_log(channel_id):
-    filename = get_log_filename(channel_id)
+
+def sanitize_filename_part(value, fallback="ticket"):
+    cleaned = _INVALID_FILENAME_CHARS_RE.sub("-", str(value or ""))
+    cleaned = " ".join(cleaned.split()).strip(" .-_")
+    return cleaned[:120] or fallback
+
+
+def get_channel_created_at(channel):
+    created_at = getattr(channel, "created_at", None)
+    if created_at is None:
+        return datetime.now().astimezone()
+    try:
+        return created_at.astimezone()
+    except Exception:
+        return created_at
+
+
+def get_log_filename(channel):
+    channel_id = getattr(channel, "id", "unknown")
+    channel_name = sanitize_filename_part(getattr(channel, "name", ""), f"ticket-{channel_id}")
+    created_at = get_channel_created_at(channel)
+    created_at_text = sanitize_filename_part(created_at.strftime(LOG_TICKET_DATETIME_FORMAT), "unknown-date")
+    filename = LOG_TICKET_FILENAME_TEMPLATE.format(
+        channel_id=channel_id,
+        channel_name=channel_name,
+        created_at=created_at_text,
+    )
+    filename = sanitize_filename_part(filename, f"ticket-{channel_id}-{created_at_text}")
+    extension = sanitize_filename_part(LOG_TICKET_FILE_EXTENSION, "json").lstrip(".")
+    return str(Path(LOGS_PATH) / f"{filename}.{extension}")
+
+
+def load_ticket_log(channel):
+    filename = get_log_filename(channel)
     if os.path.exists(filename):
         try:
             with open(filename, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            log_exception("Не удалось прочитать лог тикета", e, channel_id=channel_id, file=filename)
+            log_exception(
+                "Не удалось прочитать лог тикета",
+                e,
+                channel_id=getattr(channel, "id", "unknown"),
+                file=filename
+            )
             return []
     return []
 
-def save_ticket_log(channel_id, log_data):
-    filename = get_log_filename(channel_id)
+def save_ticket_log(channel, log_data):
+    filename = get_log_filename(channel)
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(log_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        log_exception("Не удалось сохранить лог тикета", e, channel_id=channel_id, file=filename)
+        log_exception(
+            "Не удалось сохранить лог тикета",
+            e,
+            channel_id=getattr(channel, "id", "unknown"),
+            file=filename
+        )
 
-def log_message(channel_id, user_id, username, message, bot_response=None, is_human_transfer=False, transfer_reason=None):
+def log_message(channel, user_id, username, message, bot_response=None, is_human_transfer=False, transfer_reason=None):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
+        "channel_id": str(getattr(channel, "id", "unknown")),
+        "channel_name": getattr(channel, "name", "unknown"),
         "user_id": str(user_id),
         "username": username,
         "message": message,
@@ -405,9 +458,88 @@ def log_message(channel_id, user_id, username, message, bot_response=None, is_hu
     if transfer_reason:
         log_entry["transfer_reason"] = transfer_reason
     
-    log_data = load_ticket_log(channel_id)
+    log_data = load_ticket_log(channel)
     log_data.append(log_entry)
-    save_ticket_log(channel_id, log_data)
+    save_ticket_log(channel, log_data)
+
+
+def iter_ticket_logs_for_archive():
+    if not LOG_ARCHIVE_ENABLED:
+        return []
+
+    logs_dir = Path(LOGS_PATH)
+    snapshot_path = Path(STATE_SNAPSHOT_FILE).resolve()
+    archive_dir = Path(LOG_ARCHIVE_DIR).resolve()
+    extension = sanitize_filename_part(LOG_TICKET_FILE_EXTENSION, "json").lstrip(".")
+    cutoff_time = time.time() - max(LOG_ARCHIVE_AFTER_HOURS, 0) * 60 * 60
+    ticket_logs = []
+
+    for path in logs_dir.glob(f"*.{extension}"):
+        try:
+            resolved_path = path.resolve()
+        except Exception:
+            continue
+        if resolved_path == snapshot_path or archive_dir in resolved_path.parents:
+            continue
+        if path.name.startswith("developer."):
+            continue
+        try:
+            if path.stat().st_mtime > cutoff_time:
+                continue
+        except OSError:
+            continue
+        ticket_logs.append(path)
+
+    return ticket_logs
+
+
+def archive_ticket_logs():
+    ticket_logs = iter_ticket_logs_for_archive()
+    if not ticket_logs:
+        return
+
+    archive_groups = {}
+    for path in ticket_logs:
+        try:
+            date_key = datetime.fromtimestamp(path.stat().st_mtime).strftime(LOG_ARCHIVE_DATE_FORMAT)
+        except OSError:
+            continue
+        archive_groups.setdefault(date_key, []).append(path)
+
+    archive_dir = Path(LOG_ARCHIVE_DIR)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    for date_key, paths in archive_groups.items():
+        count = len(paths)
+        archive_name = LOG_ARCHIVE_FILENAME_TEMPLATE.format(date=date_key, count=count)
+        archive_name = sanitize_filename_part(archive_name, f"tickets-{date_key}-{count}.zip")
+        if not archive_name.lower().endswith(".zip"):
+            archive_name = f"{archive_name}.zip"
+        archive_path = archive_dir / archive_name
+        if archive_path.exists():
+            suffix = datetime.now().strftime("%H-%M-%S")
+            archive_path = archive_dir / f"{archive_path.stem}-{suffix}{archive_path.suffix}"
+
+        try:
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for path in paths:
+                    archive.write(path, arcname=path.name)
+            for path in paths:
+                path.unlink(missing_ok=True)
+            logger.info(
+                "Ticket logs archived | archive=%s | date=%s | count=%s",
+                archive_path,
+                date_key,
+                count
+            )
+        except Exception as e:
+            log_exception(
+                "Не удалось архивировать ticket-логи",
+                e,
+                archive=str(archive_path),
+                date=date_key,
+                count=count
+            )
 
 # ==============================================================================
 # ФУНКЦИИ AI
@@ -1155,6 +1287,11 @@ async def cleanup_conversation_state_loop():
     cleanup_expired_channel_states()
     save_conversation_state()
 
+
+@tasks.loop(hours=max(LOG_ARCHIVE_INTERVAL_HOURS, 1))
+async def archive_ticket_logs_loop():
+    archive_ticket_logs()
+
 @bot.event
 async def on_ready():
     logger.info("Бот запущен: %s", bot.user)
@@ -1163,6 +1300,8 @@ async def on_ready():
         persist_conversation_state_loop.start()
     if not cleanup_conversation_state_loop.is_running():
         cleanup_conversation_state_loop.start()
+    if LOG_ARCHIVE_ENABLED and not archive_ticket_logs_loop.is_running():
+        archive_ticket_logs_loop.start()
     if bot.user is not None:
         logger.info("ID бота: %s", bot.user.id)
     if TICKET_CATEGORY_IDS:
@@ -1292,7 +1431,7 @@ async def on_message(message):
             return
     
     log_message(
-        channel_id,
+        message.channel,
         message.author.id,
         str(message.author),
         message_text
@@ -1319,7 +1458,7 @@ async def on_message(message):
         save_conversation_state(force=True)
         
         log_message(
-            channel_id,
+            message.channel,
             message.author.id,
             str(message.author),
             message_text,
@@ -1373,7 +1512,7 @@ async def on_message(message):
         channel_data["last_answer_time"] = time.time()
     
     log_message(
-        channel_id,
+        message.channel,
         message.author.id,
         str(message.author),
         message_text,
@@ -1398,7 +1537,7 @@ async def on_message(message):
         mark_state_dirty()
         save_conversation_state(force=True)
         log_message(
-            channel_id,
+            message.channel,
             bot.user.id if bot.user is not None else 0,
             str(bot.user) if bot.user is not None else "bot",
             "Режим передачи человеку активирован",
