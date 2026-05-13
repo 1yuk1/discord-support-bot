@@ -19,6 +19,10 @@ EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
 AUTO_UPDATE_CHROMA_DB = config.AUTO_UPDATE_CHROMA_DB
 SEARCH_TOP_K = config.SEARCH_TOP_K
+SERVER_MIN_VERSION = config.SERVER_MIN_VERSION
+SERVER_MAX_VERSION = config.SERVER_MAX_VERSION
+SERVER_RECOMMENDED_VERSION = config.SERVER_RECOMMENDED_VERSION
+SERVER_SUPPORTED_VERSIONS = config.SERVER_SUPPORTED_VERSIONS
 QUESTS_SUMMARY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quests_summary.md")
 
 
@@ -26,6 +30,15 @@ def format_embedding_text(text, mode):
     if EMBEDDING_MODEL_TYPE == "e5":
         return f"{mode}: {text}"
     return text
+
+
+def server_version_text():
+    return (
+        f"Минимально поддерживаемая версия: {SERVER_MIN_VERSION}. "
+        f"Максимально поддерживаемая версия: {SERVER_MAX_VERSION}. "
+        f"Рекомендуемая версия: Vanilla {SERVER_RECOMMENDED_VERSION}. "
+        f"Поддерживаемые версии из настроек: {SERVER_SUPPORTED_VERSIONS}."
+    )
 
 
 def normalize_quest_section(raw_section):
@@ -358,14 +371,14 @@ knowledge_base = [
         "for_llm": {
             "problem": "Игрок не прошел проверку на бота при входе на сервер",
             "diagnostics": [
-                "Какая у вас версия Minecraft? (точно ли Vanilla 1.21.8?)",
+                f"Какая у вас версия Minecraft? (точно ли Vanilla {SERVER_RECOMMENDED_VERSION}?)",
                 "Пробовали ли перезапустить лаунчер?",
                 "Есть ли установленные моды? (OptiFine, Forge, Fabric)"
             ],
-            "quick_answer": "Попробуйте зайти с версии Vanilla 1.21.8 без модов.",
-            "full_solution": "Проблема скорее всего связана с модами игрока. Попросите зайти на сервер с версии Minecraft Vanilla 1.21.8 без каких-либо модов.",
+            "quick_answer": f"Попробуйте зайти с версии Vanilla {SERVER_RECOMMENDED_VERSION} без модов.",
+            "full_solution": f"Проблема скорее всего связана с модами игрока. Попросите зайти на сервер с версии Minecraft Vanilla {SERVER_RECOMMENDED_VERSION} без каких-либо модов.",
             "steps": [
-                "1. Попросите зайти на сервер с версии Vanilla 1.21.8",
+                f"1. Попросите зайти на сервер с версии Vanilla {SERVER_RECOMMENDED_VERSION}",
                 "2. Временно отключите все моды (OptiFine, Forge, Fabric)",
                 "3. Перезапустите лаунчер",
                 "4. Попробуйте подключиться снова",
@@ -445,14 +458,14 @@ knowledge_base = [
         "for_llm": {
             "problem": "Игрок спрашивает как зайти на сервер",
             "diagnostics": [],
-            "quick_answer": "Россия: play.sinussmp.ru | Европа: play.sinussmp.com | Версии: 1.19.4–1.21.x (рекомендуется 1.21.8)",
-            "full_solution": "Для подключения к серверу используйте: play.sinussmp.ru (для России) или play.sinussmp.com (для Европы и других стран). Минимально поддерживаемая версия: 1.19.4. Максимально поддерживаемая версия: 1.21.x. Рекомендуемая версия: Vanilla 1.21.8",
+            "quick_answer": f"Россия: play.sinussmp.ru | Европа: play.sinussmp.com | Версии: {SERVER_SUPPORTED_VERSIONS} (рекомендуется {SERVER_RECOMMENDED_VERSION})",
+            "full_solution": f"Для подключения к серверу используйте: play.sinussmp.ru (для России) или play.sinussmp.com (для Европы и других стран). {server_version_text()}",
             "steps": [
                 "1. Для игроков из России: используйте адрес play.sinussmp.ru",
                 "2. Для игроков из Европы и других стран: используйте адрес play.sinussmp.com",
-                "3. Минимально поддерживаемая версия: 1.19.4",
-                "4. Максимально поддерживаемая версия: 1.21.x",
-                "5. Рекомендуемая версия Minecraft: Vanilla 1.21.8",
+                f"3. Минимально поддерживаемая версия: {SERVER_MIN_VERSION}",
+                f"4. Максимально поддерживаемая версия: {SERVER_MAX_VERSION}",
+                f"5. Рекомендуемая версия Minecraft: Vanilla {SERVER_RECOMMENDED_VERSION}",
                 "6. Если не работает, попробуйте прямой IP: 87.251.74.8"
             ],
             "transfer_to_human": False,
@@ -735,19 +748,16 @@ knowledge_base = [
         "priority": "low",
         "for_llm": {
             "problem": "Игрок спрашивает когда получит ответ на свой тикет",
-            "diagnostics": [
-                "Когда был создан этот тикет?",
-                "Какой тип проблемы у вас?"
-            ],
-            "quick_answer": "Ваш вопрос будет решен в ближайшее время. Среднее время ответа — от 1 до 24 часов.",
-            "full_solution": "Ваш вопрос будет решен в ближайшее время. Среднее время ответа — от 1 до 24 часов. Пожалуйста, ожидайте — мы обязательно ответим.",
+            "diagnostics": [],
+            "quick_answer": "Пожалуйста, ожидайте в ближайшее свободное время. Точных сроков рассмотрения тикета бот не называет.",
+            "full_solution": "Не называйте конкретные сроки рассмотрения тикета. Попросите игрока ожидать ответа в ближайшее свободное время.",
             "steps": [
                 "1. Успокойте игрока",
-                "2. Сообщите среднее время ответа (1-24 часа)",
-                "3. Попросите ожидать"
+                "2. Не называйте SLA, часы или минуты",
+                "3. Попросите ожидать в ближайшее свободное время"
             ],
             "transfer_to_human": False,
-            "immediate_action": "Успокоить и сообщить о времени ожидания"
+            "immediate_action": "Успокоить без обещания конкретных сроков"
         }
     },
     

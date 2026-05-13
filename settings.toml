@@ -55,6 +55,17 @@ user_message_limit = 3
 user_message_window = 10
 max_history = 6
 
+[server]
+min_version = "1.19.4"
+max_version = "1.21.10"
+recommended_version = "1.21.10"
+supported_versions = "1.19.4, 1.20.1, 1.20.4, 1.20.6, 1.21.x"
+
+[state]
+snapshot_file = "logs/conversation_state.json"
+save_interval_seconds = 30
+ttl_seconds = 604800
+
 [transfer]
 phrases = [
     "тех поддержка", "техподдержка", "переведи на человека", "позови человека",

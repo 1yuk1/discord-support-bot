@@ -106,5 +106,23 @@ USER_MESSAGE_LIMIT: int = _rate_limit_cfg.get("user_message_limit", 3)
 USER_MESSAGE_WINDOW: int = _rate_limit_cfg.get("user_message_window", 10)
 MAX_HISTORY: int = _rate_limit_cfg.get("max_history", 6)
 
+# ── Server facts ─────────────────────────────────────────────────────────────
+_server_cfg = _cfg.get("server", {})
+SERVER_MIN_VERSION: str = _server_cfg.get("min_version", "1.19.4")
+SERVER_MAX_VERSION: str = _server_cfg.get("max_version", "1.21.10")
+SERVER_RECOMMENDED_VERSION: str = _server_cfg.get("recommended_version", "1.21.10")
+SERVER_SUPPORTED_VERSIONS: str = _server_cfg.get(
+    "supported_versions",
+    f"{SERVER_MIN_VERSION}, {SERVER_MAX_VERSION}",
+)
+
+# ── Runtime state ────────────────────────────────────────────────────────────
+_state_cfg = _cfg.get("state", {})
+STATE_SNAPSHOT_FILE: str = str(
+    BASE_DIR / _state_cfg.get("snapshot_file", "logs/conversation_state.json")
+)
+STATE_SAVE_INTERVAL_SECONDS: int = _state_cfg.get("save_interval_seconds", 30)
+STATE_TTL_SECONDS: int = _state_cfg.get("ttl_seconds", 7 * 24 * 60 * 60)
+
 # ── Transfer ─────────────────────────────────────────────────────────────────
 HUMAN_TRANSFER_PHRASES: list[str] = _cfg["transfer"]["phrases"]
