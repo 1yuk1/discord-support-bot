@@ -66,6 +66,8 @@ AI_PROVIDER: str = _cfg["ai"]["provider"]
 EMBEDDING_MODEL: str = _cfg["ai"].get("embedding_model", "BAAI/bge-m3")
 EMBEDDING_MODEL_TYPE: str = _cfg["ai"].get("embedding_model_type", "bge")
 SEARCH_TOP_K: int = _cfg["ai"].get("search_top_k", 2)
+AI_REQUEST_TIMEOUT_SECONDS: int = _cfg["ai"].get("request_timeout_seconds", 90)
+AI_MAX_CONCURRENT_REQUESTS: int = _cfg["ai"].get("max_concurrent_requests", 2)
 
 GROQ_API_KEY: str = _cfg["ai"]["groq"]["api_key"]
 GROQ_MODEL: str = _cfg["ai"]["groq"]["model"]

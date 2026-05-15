@@ -15,6 +15,8 @@ provider = "groq"
 embedding_model = "BAAI/bge-m3"
 embedding_model_type = "bge"
 search_top_k = 4
+request_timeout_seconds = 90
+max_concurrent_requests = 2
 
 [ai.groq]
 api_key = "YOUR_GROQ_API_KEY"

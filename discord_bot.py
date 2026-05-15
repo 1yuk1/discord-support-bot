@@ -43,6 +43,8 @@ LOCAL_MODEL = config.LOCAL_MODEL
 EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
 SEARCH_TOP_K = config.SEARCH_TOP_K
+AI_REQUEST_TIMEOUT_SECONDS = config.AI_REQUEST_TIMEOUT_SECONDS
+AI_MAX_CONCURRENT_REQUESTS = config.AI_MAX_CONCURRENT_REQUESTS
 USE_PROXY = config.USE_PROXY
 PROXY_HOST = config.PROXY_HOST
 PROXY_PORT = config.PROXY_PORT
@@ -291,16 +293,17 @@ def normalize_query_for_search(text):
 # Инициализация AI клиентов
 groq_client: Any = None
 openai_client: Any = None
+http_timeout = httpx.Timeout(AI_REQUEST_TIMEOUT_SECONDS, connect=min(AI_REQUEST_TIMEOUT_SECONDS, 15))
 
 if AI_PROVIDER == "groq":
     logger.info("AI провайдер: Groq (модель: %s)", GROQ_MODEL)
     if USE_PROXY:
         proxy_url = get_proxy_url()
         logger.info("Groq будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
-        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
-        groq_client = Groq(api_key=GROQ_API_KEY, http_client=http_client)
+        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url), timeout=http_timeout)
+        groq_client = Groq(api_key=GROQ_API_KEY, http_client=http_client, max_retries=1)
     else:
-        groq_client = Groq(api_key=GROQ_API_KEY)
+        groq_client = Groq(api_key=GROQ_API_KEY, timeout=AI_REQUEST_TIMEOUT_SECONDS, max_retries=1)
     openai_client = None
 
 elif AI_PROVIDER == "openrouter":
@@ -321,18 +324,21 @@ elif AI_PROVIDER == "openrouter":
     if USE_PROXY:
         proxy_url = get_proxy_url()
         logger.info("OpenRouter будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
-        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url))
+        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url), timeout=http_timeout)
         openai_client = OpenAI(
             api_key=OPENROUTER_API_KEY,
             base_url=OPENROUTER_API_URL,
             default_headers=default_headers,
-            http_client=http_client
+            http_client=http_client,
+            max_retries=1
         )
     else:
         openai_client = OpenAI(
             api_key=OPENROUTER_API_KEY,
             base_url=OPENROUTER_API_URL,
-            default_headers=default_headers
+            default_headers=default_headers,
+            timeout=AI_REQUEST_TIMEOUT_SECONDS,
+            max_retries=1
         )
     groq_client = None
 
@@ -340,7 +346,9 @@ elif AI_PROVIDER == "local":
     logger.info("AI провайдер: Локальная модель (URL: %s, модель: %s)", LOCAL_API_URL, LOCAL_MODEL)
     openai_client = OpenAI(
         api_key=LOCAL_API_KEY,
-        base_url=LOCAL_API_URL
+        base_url=LOCAL_API_URL,
+        timeout=AI_REQUEST_TIMEOUT_SECONDS,
+        max_retries=1
     )
     groq_client = None
 
@@ -725,6 +733,14 @@ def generate_answer(user_input, conversation_history):
     })
 
     current_model = get_current_model()
+    logger.info(
+        "Запрос к AI | provider=%s | model=%s | history_messages=%s | has_context=%s | user_input_preview=%s",
+        AI_PROVIDER,
+        current_model,
+        len(messages),
+        bool(context),
+        user_input[:200].replace("\n", " ")
+    )
 
     try:
         if AI_PROVIDER == "groq":
@@ -734,7 +750,7 @@ def generate_answer(user_input, conversation_history):
                 temperature=0.3,
                 max_tokens=1024
             )
-            return response.choices[0].message.content
+            answer = response.choices[0].message.content
 
         elif AI_PROVIDER == "openrouter":
             response = openai_client.chat.completions.create(
@@ -743,7 +759,7 @@ def generate_answer(user_input, conversation_history):
                 temperature=0.3,
                 max_tokens=1024
             )
-            return response.choices[0].message.content
+            answer = response.choices[0].message.content
 
         elif AI_PROVIDER == "local":
             # Для локальных reasoning-моделей (gpt-oss и подобных) даём больше токенов,
@@ -754,7 +770,18 @@ def generate_answer(user_input, conversation_history):
                 temperature=0.3,
                 max_tokens=2048
             )
-            return response.choices[0].message.content
+            answer = response.choices[0].message.content
+
+        else:
+            answer = "⚠️ Произошла ошибка. Попробуйте ещё раз."
+
+        logger.info(
+            "Ответ AI получен | provider=%s | model=%s | answer_preview=%s",
+            AI_PROVIDER,
+            current_model,
+            (answer or "")[:200].replace("\n", " ")
+        )
+        return answer
 
     except Exception as e:
         error_msg = str(e)
@@ -796,6 +823,7 @@ else:
 
 conversation_histories = {}
 state_dirty = False
+ai_request_semaphore = asyncio.Semaphore(max(AI_MAX_CONCURRENT_REQUESTS, 1))
 
 # Rate limiting: общий лимит для всех пользователей
 global_message_times = deque()
@@ -884,6 +912,7 @@ def load_conversation_state():
 
     now = time.time()
     restored = 0
+    restored_human_mode = 0
     for raw_channel_id, data in snapshot.items():
         try:
             channel_id = int(raw_channel_id)
@@ -898,8 +927,14 @@ def load_conversation_state():
         state["last_activity"] = last_activity
         conversation_histories[channel_id] = state
         restored += 1
+        if state["human_mode"]:
+            restored_human_mode += 1
 
-    logger.info("Восстановлено состояний тикетов из snapshot: %s", restored)
+    logger.info(
+        "Восстановлено состояний тикетов из snapshot: %s | human_mode=%s",
+        restored,
+        restored_human_mode
+    )
 
 
 def cleanup_expired_channel_states():
@@ -1355,12 +1390,23 @@ async def on_message(message):
         return
 
     if bot.user is not None and message.author.bot and message.author.id == bot.user.id:
+        logger.info("Сообщение самого бота проигнорировано | channel_id=%s", getattr(message.channel, "id", "unknown"))
         return
 
     if message.author.bot and not should_use_message_as_question(message):
+        logger.info(
+            "Сообщение другого бота без полезного текста проигнорировано | channel_id=%s | author=%s",
+            getattr(message.channel, "id", "unknown"),
+            message.author
+        )
         return
 
     if not message.author.bot and member_has_ignored_role(message.author):
+        logger.info(
+            "Сообщение проигнорировано из-за ignored_role | channel_id=%s | author=%s",
+            getattr(message.channel, "id", "unknown"),
+            message.author
+        )
         return
 
     if not message.author.bot and (message.content or "").lstrip().startswith("!"):
@@ -1375,10 +1421,12 @@ async def on_message(message):
     channel_data = conversation_histories[channel_id]
     touch_channel_state(channel_data)
     if message.id in channel_data["processed_message_ids"]:
+        logger.info("Сообщение уже обработано, пропуск | channel_id=%s | message_id=%s", channel_id, message.id)
         return
 
     message_text = extract_message_text(message)
     if not message_text:
+        logger.info("Сообщение без текста для AI, пропуск | channel_id=%s | message_id=%s", channel_id, message.id)
         return
 
     # ── Системные сообщения тикет-бота ───────────────────────────────────────
@@ -1389,10 +1437,12 @@ async def on_message(message):
     if message.author.bot:
         if is_ticket_close_notification(message_text):
             channel_data["processed_message_ids"].add(message.id)
+            logger.info("Системное сообщение закрытия тикета проигнорировано | channel_id=%s", channel_id)
             return
         if is_ticket_opening_message(message_text):
             if channel_data["ticket_opening_handled"]:
                 channel_data["processed_message_ids"].add(message.id)
+                logger.info("Повторная шапка открытия тикета проигнорирована | channel_id=%s", channel_id)
                 return
             channel_data["ticket_opening_handled"] = True
             mark_state_dirty()
@@ -1438,11 +1488,22 @@ async def on_message(message):
     )
     
     if channel_data["human_mode"]:
+        logger.info(
+            "AI ответ пропущен: канал в human_mode | channel_id=%s | author=%s | text_preview=%s",
+            channel_id,
+            message.author,
+            message_text[:200].replace("\n", " ")
+        )
         await moderate_human_mode_ping_spam(message, channel_data)
         mark_state_dirty()
         return
 
     if not check_bot_has_role(message.guild):
+        logger.info(
+            "AI ответ пропущен: у бота нет нужной роли | channel_id=%s | required_role_ids=%s",
+            channel_id,
+            sorted(BOT_ROLE_IDS)
+        )
         return
 
     # Просьба передать тикет человеку не должна блокироваться рейтлимитами.
@@ -1481,6 +1542,11 @@ async def on_message(message):
         return
     
     if check_duplicate_message(channel_data, message_text):
+        logger.info(
+            "AI ответ пропущен: duplicate message | channel_id=%s | text_preview=%s",
+            channel_id,
+            message_text[:200].replace("\n", " ")
+        )
         return
     
     cooldown_remaining = check_channel_cooldown(channel_data)
@@ -1492,8 +1558,26 @@ async def on_message(message):
         await safe_send(message.channel, "⏳ Слишком много сообщений. Подожди минуту.")
         return
     
+    logger.info(
+        "Начинаем генерацию ответа AI | channel_id=%s | concurrency_limit=%s",
+        channel_id,
+        max(AI_MAX_CONCURRENT_REQUESTS, 1)
+    )
     async with message.channel.typing():
-        answer = generate_answer(message_text, channel_data["history"])
+        async with ai_request_semaphore:
+            try:
+                answer = await asyncio.wait_for(
+                    asyncio.to_thread(generate_answer, message_text, channel_data["history"]),
+                    timeout=AI_REQUEST_TIMEOUT_SECONDS + 10
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "AI запрос превысил таймаут | channel_id=%s | timeout_seconds=%s | model=%s",
+                    channel_id,
+                    AI_REQUEST_TIMEOUT_SECONDS,
+                    get_current_model()
+                )
+                answer = "⚠️ AI слишком долго отвечает. Попробуйте ещё раз чуть позже."
     if answer and answer.startswith("⚠️"):
         logger.warning(
             "Пользователю отправлен безопасный текст ошибки | channel_id=%s | user_message_preview=%s | bot_answer=%s",
@@ -1532,7 +1616,7 @@ async def on_message(message):
     if len(channel_data["history"]) > MAX_HISTORY * 2:
         channel_data["history"] = channel_data["history"][-MAX_HISTORY * 2:]
     
-    if is_human_transfer(answer):
+    if answer and is_human_transfer(answer):
         channel_data["human_mode"] = True
         mark_state_dirty()
         save_conversation_state(force=True)
@@ -1574,6 +1658,33 @@ async def resume_bot(ctx):
         await safe_send(ctx.channel, "✅ Бот возобновил работу")
     else:
         await safe_send(ctx.channel, "Нет данных о канале")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def bot_status(ctx):
+    channel_id = ctx.channel.id
+    channel_data = conversation_histories.get(channel_id)
+    if not channel_data:
+        await safe_send(ctx.channel, "Нет данных о канале")
+        return
+
+    last_activity = channel_data.get("last_activity")
+    if last_activity:
+        last_activity_text = datetime.fromtimestamp(last_activity).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        last_activity_text = "неизвестно"
+
+    await safe_send(
+        ctx.channel,
+        "\n".join([
+            f"human_mode: {channel_data.get('human_mode')}",
+            f"ticket_opening_handled: {channel_data.get('ticket_opening_handled')}",
+            f"history_messages: {len(channel_data.get('history', []))}",
+            f"processed_message_ids: {len(channel_data.get('processed_message_ids', []))}",
+            f"last_activity: {last_activity_text}",
+        ])
+    )
 
 
 @bot.command(name="summarize")
