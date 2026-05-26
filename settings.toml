@@ -1,0 +1,90 @@
+# Discord Bot Settings
+# ЗАПОЛНИ ЗНАЧЕНИЯ ПЕРЕД ЗАПУСКОМ
+
+[discord]
+token = "YOUR_DISCORD_TOKEN"
+ticket_category_id = 0
+ticket_category_ids = "0"
+bot_role_id = 0
+bot_role_ids = "0"
+ignored_role_ids = "0"
+reply_footer = "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. Чтобы позвать человека, напишите: позови человека"
+
+[ai]
+provider = "groq"
+embedding_model = "intfloat/multilingual-e5-large-instruct"
+embedding_model_type = "e5-instruct"
+search_top_k = 4
+request_timeout_seconds = 90
+max_concurrent_requests = 2
+
+[ai.groq]
+api_key = "YOUR_GROQ_API_KEY"
+model = "groq/compound"
+
+[ai.openrouter]
+api_key = "YOUR_OPENROUTER_API_KEY"
+model = "openai/gpt-4o-mini"
+api_url = "https://openrouter.ai/api/v1"
+site_url = ""
+app_name = "SinusSMP Support Bot"
+
+[ai.local]
+api_url = "http://localhost:1234/v1"
+api_key = "not-needed"
+model = "local-model"
+
+[proxy]
+enabled = true
+host = "YOUR_PROXY_HOST"
+port = 0
+username = "YOUR_PROXY_USERNAME"
+password = "YOUR_PROXY_PASSWORD"
+
+[paths]
+model_cache = "model_cache"
+database = "chroma_db"
+logs = "logs"
+auto_update_chroma_db = true
+
+[logs]
+ticket_filename_template = "{channel_name}-{created_at}"
+ticket_datetime_format = "%d.%m-%H-%M"
+ticket_file_extension = "json"
+archive_enabled = true
+archive_dir = "logs/archives"
+archive_interval_hours = 24
+archive_after_hours = 24
+archive_date_format = "%d.%m"
+archive_filename_template = "tickets-{date}-{count}tickets.zip"
+
+[rate_limit]
+enabled = true
+global_limit = 30
+global_window = 60
+channel_cooldown = 5
+duplicate_check_time = 5
+user_message_limit = 3
+user_message_window = 10
+max_history = 6
+
+[server]
+min_version = "1.19.4"
+max_version = "1.21.10"
+recommended_version = "1.21.10"
+supported_versions = "1.19.4, 1.20.1, 1.20.4, 1.20.6, 1.21.x"
+
+[state]
+snapshot_file = "logs/conversation_state.json"
+save_interval_seconds = 30
+ttl_seconds = 604800
+
+[transfer]
+phrases = [
+    "тех поддержка", "техподдержка", "переведи на человека", "позови человека",
+    "живой человек", "оператор",
+    "переведи на админа", "позови админа", "соедини с человеком", "хочу человека",
+    "говорить с человеком", "поговорить с человеком", "пригласи человека",
+    "старший специалист", "позови специалиста", "переведи на специалиста",
+    "передам", "передаю", "передал", "передать человеку", "передаю тикет"
+]
