@@ -1,0 +1,130 @@
+{
+    "_comment": "Discord Support Bot - Pterodactyl Egg",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "export_version": 2,
+    "scripts": {
+        "egg": "{\n    \"$graph\": {\n        \"type\": \"Egg\",\n        \"system_node\": {\n            \"type\": \"system\",\n            \"node_software\": {\n                \"__comment\": \"Node.js is required for some Pterodactyl features but not the bot itself\",\n                \"display_name\": \"NodeJS\",\n                \"install_location\": \"/usr/local/bin\"\n            }\n        },\n        \"file_destination\": {\n            \"type\": \"file_destination\"\n        },\n        \"config_files\": {\n            \"__comment\": \"No config files to replace - settings are created from environment variables\",\n            \"type\": \"config_files\"\n        },\n        \"config_startup\": {\n            \"done\": {\n                \"type\": \"config_startup\"\n            }\n        },\n        \"config_logs\": {\n            \"type\": \"config_logs\"\n        },\n        \"config_files_end\": {\n            \"type\": \"config_files_end\"\n        }\n    }\n}"
+    },
+    "name": "Discord Support Bot",
+    "author": "1yuk1",
+    "description": "Discord Support Bot with AI (Groq) and ChromaDB",
+    "features": {
+        "configs": [],
+        "env": [
+            {
+                "default": null,
+                "name": "DISCORD_TOKEN",
+                "presentation": {
+                    "default": null,
+                    "description": "Discord bot token from Developer Portal",
+                    "name": "Discord Token",
+                    "required": true,
+                    "type": "text"
+                }
+            },
+            {
+                "default": null,
+                "name": "GROQ_API_KEY",
+                "presentation": {
+                    "default": null,
+                    "description": "Groq API key",
+                    "name": "Groq API Key",
+                    "required": true,
+                    "type": "text"
+                }
+            },
+            {
+                "default": "123456789012345678",
+                "name": "TICKET_CATEGORY_ID",
+                "presentation": {
+                    "default": null,
+                    "description": "Discord category ID for tickets",
+                    "name": "Ticket Category ID",
+                    "required": false,
+                    "type": "text"
+                }
+            },
+            {
+                "default": "123456789012345678",
+                "name": "BOT_ROLE_ID",
+                "presentation": {
+                    "default": null,
+                    "description": "Bot role ID (optional)",
+                    "name": "Bot Role ID",
+                    "required": false,
+                    "type": "text"
+                }
+            },
+            {
+                "default": "false",
+                "name": "USE_PROXY",
+                "presentation": {
+                    "default": null,
+                    "description": "Enable proxy (true/false)",
+                    "name": "Use Proxy",
+                    "required": false,
+                    "type": "checkbox"
+                }
+            },
+            {
+                "default": "127.0.0.1",
+                "name": "PROXY_HOST",
+                "presentation": {
+                    "default": null,
+                    "description": "Proxy host",
+                    "name": "Proxy Host",
+                    "required": false,
+                    "type": "text"
+                }
+            },
+            {
+                "default": "10808",
+                "name": "PROXY_PORT",
+                "presentation": {
+                    "default": null,
+                    "description": "Proxy port",
+                    "name": "Proxy Port",
+                    "required": false,
+                    "type": "text"
+                }
+            }
+        ],
+        "files": [],
+        "startup": {
+            "done": [
+                "/entrypoint.sh"
+            ],
+            "interval": 5,
+            "word": "Бот запущен"
+        },
+        "config": {
+            "files": {},
+            "startup": {
+                "done": "/entrypoint.sh"
+            },
+            "logs": {
+                "custom": true,
+                "max_size": 10,
+                "suffix": "log"
+            }
+        }
+    },
+    "container": {
+        "image": "ghcr.io/1yuk1/discord-support-bot:latest",
+        "stack": "python",
+        "startup": {
+            "done": "/entrypoint.sh",
+            "entrypoint": "/bin/bash",
+            "cmd": "/entrypoint.sh"
+        },
+        "requires_full_access_to_filesystem": true
+    },
+    "鸡蛋": {
+        "名称": "Discord Support Bot",
+        "描述": "Discord бот поддержки с AI (Groq) и ChromaDB",
+        "作者": "1yuk1"
+    }
+}

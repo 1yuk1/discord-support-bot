@@ -1,0 +1,21 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+
+# Конфиг с секретами
+settings.toml
+
+# База данных и кэш
+chroma_db/
+model_cache/
+
+# Логи
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
