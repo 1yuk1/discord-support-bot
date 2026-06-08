@@ -42,8 +42,8 @@ if [ ! -f "settings.toml" ]; then
         echo "   Добавь переменные в Pterodactyl Startup → Environment Variables"
         exit 1
     fi
-    if [ -z "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY" = "YOUR_GROQ_API_KEY" ]; then
-        echo "❌ Ошибка: GROQ_API_KEY не установлен!"
+    if [ -z "$OPENROUTER_API_KEY" ] || [ "$OPENROUTER_API_KEY" = "YOUR_OPENROUTER_API_KEY" ]; then
+        echo "❌ Ошибка: OPENROUTER_API_KEY не установлен!"
         exit 1
     fi
     
@@ -57,18 +57,15 @@ bot_role_id = ${BOT_ROLE_ID:-0}
 ignored_role_ids = "$ignored_role_ids"
 
 [ai]
-provider = "groq"
 embedding_model = "${EMBEDDING_MODEL:-intfloat/multilingual-e5-large-instruct}"
 embedding_model_type = "${EMBEDDING_MODEL_TYPE:-e5-instruct}"
 
-[ai.groq]
-api_key = "$GROQ_API_KEY"
-model = "groq/compound"
-
-[ai.local]
-api_url = "http://localhost:1234/v1"
-api_key = "not-needed"
-model = "local-model"
+[ai.openrouter]
+api_key = "$OPENROUTER_API_KEY"
+model = "${OPENROUTER_MODEL:-mimo-2.5-pro}"
+api_url = "${OPENROUTER_API_URL:-https://openrouter.ai/api/v1}"
+site_url = "${OPENROUTER_SITE_URL:-}"
+app_name = "${OPENROUTER_APP_NAME:-SinusSMP Support Bot}"
 
 [proxy]
 enabled = ${USE_PROXY:-false}

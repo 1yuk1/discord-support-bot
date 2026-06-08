@@ -6,7 +6,6 @@ if reconfigure_stdout:
 
 import discord
 from discord.ext import commands, tasks
-from groq import Groq
 import chromadb
 from sentence_transformers import SentenceTransformer
 import json
@@ -25,21 +24,20 @@ from typing import Any
 from logging.handlers import RotatingFileHandler
 
 import config
+from escalation import (
+    is_llm_human_transfer,
+    is_user_human_transfer,
+    should_force_human_transfer,
+)
 
 # Краткие алиасы из config
 DISCORD_TOKEN = config.DISCORD_TOKEN
-AI_PROVIDER = config.AI_PROVIDER
 SETTINGS_PATH = config.SETTINGS_PATH
-GROQ_API_KEY = config.GROQ_API_KEY
-GROQ_MODEL = config.GROQ_MODEL
 OPENROUTER_API_KEY = config.OPENROUTER_API_KEY
 OPENROUTER_MODEL = config.OPENROUTER_MODEL
 OPENROUTER_API_URL = config.OPENROUTER_API_URL
 OPENROUTER_SITE_URL = config.OPENROUTER_SITE_URL
 OPENROUTER_APP_NAME = config.OPENROUTER_APP_NAME
-LOCAL_API_URL = config.LOCAL_API_URL
-LOCAL_API_KEY = config.LOCAL_API_KEY
-LOCAL_MODEL = config.LOCAL_MODEL
 EMBEDDING_MODEL = config.EMBEDDING_MODEL
 EMBEDDING_MODEL_TYPE = config.EMBEDDING_MODEL_TYPE
 SEARCH_TOP_K = config.SEARCH_TOP_K
@@ -68,7 +66,6 @@ LOG_ARCHIVE_INTERVAL_HOURS = config.LOG_ARCHIVE_INTERVAL_HOURS
 LOG_ARCHIVE_AFTER_HOURS = config.LOG_ARCHIVE_AFTER_HOURS
 LOG_ARCHIVE_DATE_FORMAT = config.LOG_ARCHIVE_DATE_FORMAT
 LOG_ARCHIVE_FILENAME_TEMPLATE = config.LOG_ARCHIVE_FILENAME_TEMPLATE
-HUMAN_TRANSFER_PHRASES = config.HUMAN_TRANSFER_PHRASES
 RATE_LIMIT_ENABLED = config.RATE_LIMIT_ENABLED
 CHANNEL_COOLDOWN = config.CHANNEL_COOLDOWN
 DUPLICATE_CHECK_TIME = config.DUPLICATE_CHECK_TIME
@@ -133,23 +130,20 @@ def log_exception(message, exc, **context):
     )
 
 
-RUNTIME_MODELS = {
-    "groq": GROQ_MODEL,
-    "openrouter": OPENROUTER_MODEL,
-    "local": LOCAL_MODEL,
-}
+current_model = OPENROUTER_MODEL
 
 
 def get_current_model():
-    return RUNTIME_MODELS.get(AI_PROVIDER, "")
+    return current_model
 
 
 def set_current_model(model_name):
-    RUNTIME_MODELS[AI_PROVIDER] = model_name
+    global current_model
+    current_model = model_name
 
 
-def save_model_to_settings(provider, model_name):
-    section_header = f"[ai.{provider}]"
+def save_model_to_settings(model_name):
+    section_header = "[ai.openrouter]"
     with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
@@ -300,71 +294,43 @@ def normalize_query_for_search(text):
     return variants
 
 
-# Инициализация AI клиентов
-groq_client: Any = None
+# Инициализация AI клиента
 openai_client: Any = None
 http_timeout = httpx.Timeout(AI_REQUEST_TIMEOUT_SECONDS, connect=min(AI_REQUEST_TIMEOUT_SECONDS, 15))
 
-if AI_PROVIDER == "groq":
-    logger.info("AI провайдер: Groq (модель: %s)", GROQ_MODEL)
-    if USE_PROXY:
-        proxy_url = get_proxy_url()
-        logger.info("Groq будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
-        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url), timeout=http_timeout)
-        groq_client = Groq(api_key=GROQ_API_KEY, http_client=http_client, max_retries=1)
-    else:
-        groq_client = Groq(api_key=GROQ_API_KEY, timeout=AI_REQUEST_TIMEOUT_SECONDS, max_retries=1)
-    openai_client = None
+logger.info("AI провайдер: OpenRouter (модель: %s)", OPENROUTER_MODEL)
+if not OPENROUTER_API_KEY:
+    logger.error("OpenRouter API key не указан в settings.toml")
+    exit()
+if not OPENROUTER_MODEL:
+    logger.error("OpenRouter model не указана в settings.toml")
+    exit()
 
-elif AI_PROVIDER == "openrouter":
-    logger.info("AI провайдер: OpenRouter (модель: %s)", OPENROUTER_MODEL)
-    if not OPENROUTER_API_KEY:
-        logger.error("OpenRouter API key не указан в settings.toml")
-        exit()
-    if not OPENROUTER_MODEL:
-        logger.error("OpenRouter model не указана в settings.toml")
-        exit()
+default_headers = {}
+if OPENROUTER_SITE_URL:
+    default_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
+if OPENROUTER_APP_NAME:
+    default_headers["X-Title"] = OPENROUTER_APP_NAME
 
-    default_headers = {}
-    if OPENROUTER_SITE_URL:
-        default_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
-    if OPENROUTER_APP_NAME:
-        default_headers["X-Title"] = OPENROUTER_APP_NAME
-
-    if USE_PROXY:
-        proxy_url = get_proxy_url()
-        logger.info("OpenRouter будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
-        http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url), timeout=http_timeout)
-        openai_client = OpenAI(
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_API_URL,
-            default_headers=default_headers,
-            http_client=http_client,
-            max_retries=1
-        )
-    else:
-        openai_client = OpenAI(
-            api_key=OPENROUTER_API_KEY,
-            base_url=OPENROUTER_API_URL,
-            default_headers=default_headers,
-            timeout=AI_REQUEST_TIMEOUT_SECONDS,
-            max_retries=1
-        )
-    groq_client = None
-
-elif AI_PROVIDER == "local":
-    logger.info("AI провайдер: Локальная модель (URL: %s, модель: %s)", LOCAL_API_URL, LOCAL_MODEL)
+if USE_PROXY:
+    proxy_url = get_proxy_url()
+    logger.info("OpenRouter будет использовать прокси: %s:%s", PROXY_HOST, PROXY_PORT)
+    http_client = httpx.Client(transport=httpx.HTTPTransport(proxy=proxy_url), timeout=http_timeout)
     openai_client = OpenAI(
-        api_key=LOCAL_API_KEY,
-        base_url=LOCAL_API_URL,
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_API_URL,
+        default_headers=default_headers,
+        http_client=http_client,
+        max_retries=1
+    )
+else:
+    openai_client = OpenAI(
+        api_key=OPENROUTER_API_KEY,
+        base_url=OPENROUTER_API_URL,
+        default_headers=default_headers,
         timeout=AI_REQUEST_TIMEOUT_SECONDS,
         max_retries=1
     )
-    groq_client = None
-
-else:
-    logger.error("Неизвестный AI_PROVIDER: %s", AI_PROVIDER)
-    exit()
 
 # ==============================================================================
 # ПОДКЛЮЧЕНИЕ К БАЗЕ ЗНАНИЙ (ChromaDB)
@@ -462,7 +428,7 @@ def save_ticket_log(channel, log_data):
             file=filename
         )
 
-def log_message(channel, user_id, username, message, bot_response=None, is_human_transfer=False, transfer_reason=None):
+def log_message(channel, user_id, username, message, bot_response=None, is_human_transfer=False, transfer_reason=None, image_urls=None):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
         "channel_id": str(getattr(channel, "id", "unknown")),
@@ -475,6 +441,8 @@ def log_message(channel, user_id, username, message, bot_response=None, is_human
     }
     if transfer_reason:
         log_entry["transfer_reason"] = transfer_reason
+    if image_urls:
+        log_entry["image_urls"] = image_urls
     
     log_data = load_ticket_log(channel)
     log_data.append(log_entry)
@@ -654,7 +622,16 @@ def _is_short_clarification(text: str) -> bool:
     return False
 
 
-def generate_answer(user_input, conversation_history):
+def _build_user_content(text: str, image_urls: list[str] | None):
+    if not image_urls:
+        return text
+    parts = [{"type": "text", "text": text}]
+    for url in image_urls:
+        parts.append({"type": "image_url", "image_url": {"url": url}})
+    return parts
+
+
+def generate_answer(user_input, conversation_history, image_urls=None):
     """Генерирует ответ LLM.
 
     conversation_history — список dict-ов вида {"role": "user"|"assistant", "content": str}.
@@ -718,14 +695,14 @@ def generate_answer(user_input, conversation_history):
 - Если в КОНТЕКСТЕ нет цены конкретного товара — направь игрока на https://sinussmp.ru, не выдумывай цифры.
 
 Приоритет контекста:
-- Если КОНТЕКСТ содержит инструкции по текущей теме, следуй им.
-- Если системные правила и контекст отличаются, выполняй системные правила.
-- Если контекста нет или он явно не подходит, вежливо уточни одну ключевую деталь или предложи передать тикет старшему специалисту."""
+- Факты, цены, команды, способы оплаты, IP и правила бери только из КОНТЕКСТА.
+- Системные правила определяют поведение: краткость, запрет на выдумки и формулировки передачи человеку.
+- Если контекста нет или он явно не подходит, не выдумывай и задай один самый важный уточняющий вопрос."""
 
     if context:
         context_block = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context}"
     else:
-        context_block = "КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n(Информация не найдена — уточни у игрока детали проблемы или предложи передать вопрос старшему специалисту)"
+        context_block = "КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n(Информация не найдена — задай один самый важный уточняющий вопрос)"
 
     # Формируем messages: system → история (как настоящие user/assistant) → текущий вопрос с контекстом.
     messages = [{"role": "system", "content": system_instruction}]
@@ -742,55 +719,33 @@ def generate_answer(user_input, conversation_history):
 
     messages.append({
         "role": "user",
-        "content": f"{context_block}\n\nТЕКУЩИЙ ВОПРОС ИГРОКА:\n{user_input}"
+        "content": _build_user_content(
+            f"{context_block}\n\nТЕКУЩИЙ ВОПРОС ИГРОКА:\n{user_input}",
+            image_urls
+        )
     })
 
     current_model = get_current_model()
     logger.info(
-        "Запрос к AI | provider=%s | model=%s | history_messages=%s | has_context=%s | user_input_preview=%s",
-        AI_PROVIDER,
+        "Запрос к AI | provider=openrouter | model=%s | history_messages=%s | has_context=%s | images=%s | user_input_preview=%s",
         current_model,
         len(messages),
         bool(context),
+        len(image_urls) if image_urls else 0,
         user_input[:200].replace("\n", " ")
     )
 
     try:
-        if AI_PROVIDER == "groq":
-            response = groq_client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1024
-            )
-            answer = response.choices[0].message.content
-
-        elif AI_PROVIDER == "openrouter":
-            response = openai_client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=1024
-            )
-            answer = response.choices[0].message.content
-
-        elif AI_PROVIDER == "local":
-            # Для локальных reasoning-моделей (gpt-oss и подобных) даём больше токенов,
-            # т.к. часть бюджета уходит на скрытые рассуждения.
-            response = openai_client.chat.completions.create(
-                model=current_model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=2048
-            )
-            answer = response.choices[0].message.content
-
-        else:
-            answer = "⚠️ Произошла ошибка. Попробуйте ещё раз."
+        response = openai_client.chat.completions.create(
+            model=current_model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1024
+        )
+        answer = response.choices[0].message.content
 
         logger.info(
-            "Ответ AI получен | provider=%s | model=%s | answer_preview=%s",
-            AI_PROVIDER,
+            "Ответ AI получен | provider=openrouter | model=%s | answer_preview=%s",
             current_model,
             (answer or "")[:200].replace("\n", " ")
         )
@@ -801,7 +756,7 @@ def generate_answer(user_input, conversation_history):
         log_exception(
             "Ошибка генерации ответа AI",
             e,
-            provider=AI_PROVIDER,
+            provider="openrouter",
             model=current_model,
             user_input_preview=user_input[:200]
         )
@@ -997,34 +952,6 @@ def is_ticket_opening_message(text: str) -> bool:
     return any(marker in low for marker in _TICKET_OPENING_MARKERS)
 
 
-# ── Жалобы, которые бот НЕ должен пытаться решать сам ────────────────────────
-# Любое из этих слов в первом сообщении тикета → сразу человек, без LLM.
-# Подобраны по реальным тикетам за 2 дня (взломы, пропажа вещей, разбан,
-# возврат покупок, жалобы на хелперов, обжалование банов).
-_FORCE_HUMAN_KEYWORDS = (
-    "взлом", "взломал", "взломали",
-    "украл", "украли",
-    "пропал", "пропала", "пропали",
-    "верните", "вернити", "верни мне", "вернуть",
-    "потерял", "потеряла",
-    "обжалов", "обжалую", "обжалуй",
-    "жалоб", "жалуюсь",
-    "забанил", "забанили", "разбан", "разбана",
-    "купил разбан",
-    "сетнул", "сетнули",  # «сетнули уровень/инвентарь» — админский откат
-    "случайно куп", "мискликн", "мисклик",
-    "вернуть лед", "вернуть монет", "вернуть донат",
-    "донат не пришел", "донат не пришёл", "не пришла покупка",
-)
-
-
-def should_force_human_transfer(text: str) -> bool:
-    if not text:
-        return False
-    low = text.lower()
-    return any(kw in low for kw in _FORCE_HUMAN_KEYWORDS)
-
-
 def is_ticket_channel(channel):
     if not TICKET_CATEGORY_IDS:
         return True
@@ -1083,7 +1010,27 @@ def should_use_message_as_question(message):
     content = _strip_noise(message.content or "")
     if content and not _is_trivial_text(content):
         return True
-    return len(message.embeds) > 0
+    if len(message.embeds) > 0:
+        return True
+    return len(extract_image_urls(message)) > 0
+
+
+_IMAGE_MIME_PREFIXES = ("image/",)
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+
+def extract_image_urls(message) -> list[str]:
+    urls = []
+    for attachment in message.attachments:
+        url = getattr(attachment, "url", None)
+        if not url:
+            continue
+        content_type = getattr(attachment, "content_type", None) or ""
+        filename = (getattr(attachment, "filename", None) or "").lower()
+        if any(content_type.startswith(p) for p in _IMAGE_MIME_PREFIXES) or \
+           any(filename.endswith(ext) for ext in _IMAGE_EXTENSIONS):
+            urls.append(url)
+    return urls
 
 
 def extract_message_text(message):
@@ -1214,11 +1161,6 @@ async def moderate_human_mode_ping_spam(message, channel_data):
         )
 
 
-def is_human_transfer(text):
-    text_lower = text.lower()
-    return any(phrase in text_lower for phrase in HUMAN_TRANSFER_PHRASES)
-
-
 def generate_ticket_summary(transcript):
     prompt = f"""Сделай краткую сводку Discord-тикета для администратора SinusSMP.
 
@@ -1241,15 +1183,6 @@ def generate_ticket_summary(transcript):
         {"role": "user", "content": prompt},
     ]
     current_model = get_current_model()
-
-    if AI_PROVIDER == "groq":
-        response = groq_client.chat.completions.create(
-            model=current_model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=700
-        )
-        return response.choices[0].message.content
 
     response = openai_client.chat.completions.create(
         model=current_model,
@@ -1438,9 +1371,12 @@ async def on_message(message):
         return
 
     message_text = extract_message_text(message)
-    if not message_text:
-        logger.info("Сообщение без текста для AI, пропуск | channel_id=%s | message_id=%s", channel_id, message.id)
+    image_urls = extract_image_urls(message)
+    if not message_text and not image_urls:
+        logger.info("Сообщение без текста и изображений для AI, пропуск | channel_id=%s | message_id=%s", channel_id, message.id)
         return
+    if not message_text:
+        message_text = "[Игрок прислал скриншот]"
 
     # ── Системные сообщения тикет-бота ───────────────────────────────────────
     # 1) Уведомления о закрытии/неактивности — НИКОГДА не отвечаем (бот не
@@ -1471,7 +1407,7 @@ async def on_message(message):
         channel_data["processed_message_ids"] = set(list(channel_data["processed_message_ids"])[-100:])
     
     transfer_reason = None
-    transfer_requested = is_human_transfer(message_text)
+    transfer_requested = is_user_human_transfer(message_text)
     if transfer_requested:
         transfer_reason = "phrase"
     # Жалобы про взлом/потерю/разбан/возврат покупки и т.п. бот не должен
@@ -1497,9 +1433,10 @@ async def on_message(message):
         message.channel,
         message.author.id,
         str(message.author),
-        message_text
+        message_text,
+        image_urls=image_urls if image_urls else None
     )
-    
+
     if channel_data["human_mode"]:
         logger.info(
             "AI ответ пропущен: канал в human_mode | channel_id=%s | author=%s | text_preview=%s",
@@ -1580,7 +1517,7 @@ async def on_message(message):
         async with ai_request_semaphore:
             try:
                 answer = await asyncio.wait_for(
-                    asyncio.to_thread(generate_answer, message_text, channel_data["history"]),
+                    asyncio.to_thread(generate_answer, message_text, channel_data["history"], image_urls),
                     timeout=AI_REQUEST_TIMEOUT_SECONDS + 10
                 )
             except asyncio.TimeoutError:
@@ -1629,7 +1566,7 @@ async def on_message(message):
     if len(channel_data["history"]) > MAX_HISTORY * 2:
         channel_data["history"] = channel_data["history"][-MAX_HISTORY * 2:]
     
-    if answer and is_human_transfer(answer):
+    if answer and is_llm_human_transfer(answer):
         channel_data["human_mode"] = True
         mark_state_dirty()
         save_conversation_state(force=True)
@@ -1744,7 +1681,7 @@ async def summarize_ticket(ctx, limit: int = 80):
 async def model(ctx):
     await safe_send(
         ctx.channel,
-        f"Текущий provider: {AI_PROVIDER}\nТекущая модель: {get_current_model()}"
+        f"Текущий provider: openrouter\nТекущая модель: {get_current_model()}"
     )
 
 
@@ -1759,15 +1696,14 @@ async def model_set(ctx, *, model_name: str):
     previous_model = get_current_model()
     set_current_model(model_name)
     logger.info(
-        "Модель обновлена в runtime | provider=%s | previous=%s | current=%s | author=%s",
-        AI_PROVIDER,
+        "Модель обновлена в runtime | provider=openrouter | previous=%s | current=%s | author=%s",
         previous_model,
         model_name,
         ctx.author
     )
     await safe_send(
         ctx.channel,
-        f"✅ Модель применена без рестарта.\nProvider: {AI_PROVIDER}\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
+        f"✅ Модель применена без рестарта.\nProvider: openrouter\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
     )
 
 
@@ -1779,16 +1715,16 @@ async def model_save(ctx, *, model_name: str):
         await safe_send(ctx.channel, "Укажите модель: !model save <model_name>")
         return
 
-    previous_model = get_current_model()
+        previous_model = get_current_model()
     try:
         set_current_model(model_name)
-        save_model_to_settings(AI_PROVIDER, model_name)
+        save_model_to_settings(model_name)
     except Exception as e:
         set_current_model(previous_model)
         log_exception(
             "Не удалось сохранить модель в settings.toml",
             e,
-            provider=AI_PROVIDER,
+            provider="openrouter",
             requested_model=model_name,
             author=str(ctx.author)
         )
@@ -1796,15 +1732,14 @@ async def model_save(ctx, *, model_name: str):
         return
 
     logger.info(
-        "Модель сохранена в settings.toml | provider=%s | previous=%s | current=%s | author=%s",
-        AI_PROVIDER,
+        "Модель сохранена в settings.toml | provider=openrouter | previous=%s | current=%s | author=%s",
         previous_model,
         model_name,
         ctx.author
     )
     await safe_send(
         ctx.channel,
-        f"✅ Модель применена и сохранена.\nProvider: {AI_PROVIDER}\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
+        f"✅ Модель применена и сохранена.\nProvider: openrouter\nСтарая модель: {previous_model}\nНовая модель: {model_name}"
     )
 
 @bot.command()

@@ -10,7 +10,7 @@
     },
     "name": "Discord Support Bot",
     "author": "1yuk1",
-    "description": "Discord Support Bot with AI (Groq) and ChromaDB",
+    "description": "Discord Support Bot with AI (OpenRouter) and ChromaDB",
     "features": {
         "configs": [],
         "env": [
@@ -27,11 +27,11 @@
             },
             {
                 "default": null,
-                "name": "GROQ_API_KEY",
+                "name": "OPENROUTER_API_KEY",
                 "presentation": {
                     "default": null,
-                    "description": "Groq API key",
-                    "name": "Groq API Key",
+                    "description": "OpenRouter API key",
+                    "name": "OpenRouter API Key",
                     "required": true,
                     "type": "text"
                 }
@@ -124,7 +124,7 @@
     },
     "鸡蛋": {
         "名称": "Discord Support Bot",
-        "描述": "Discord бот поддержки с AI (Groq) и ChromaDB",
+        "描述": "Discord бот поддержки с AI (OpenRouter) и ChromaDB",
         "作者": "1yuk1"
     }
 }

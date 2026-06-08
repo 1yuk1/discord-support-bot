@@ -1,5 +1,4 @@
 discord.py>=2.3
-groq>=0.4
 chromadb>=0.4
 sentence-transformers>=2.2
 httpx[socks]>=0.25

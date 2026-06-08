@@ -62,15 +62,11 @@ DEFAULT_REPLY_FOOTER = (
 BOT_REPLY_FOOTER: str = _cfg["discord"].get("reply_footer", DEFAULT_REPLY_FOOTER)
 
 # ── AI ───────────────────────────────────────────────────────────────────────
-AI_PROVIDER: str = _cfg["ai"]["provider"]
 EMBEDDING_MODEL: str = _cfg["ai"].get("embedding_model", "BAAI/bge-m3")
 EMBEDDING_MODEL_TYPE: str = _cfg["ai"].get("embedding_model_type", "bge")
 SEARCH_TOP_K: int = _cfg["ai"].get("search_top_k", 2)
 AI_REQUEST_TIMEOUT_SECONDS: int = _cfg["ai"].get("request_timeout_seconds", 90)
 AI_MAX_CONCURRENT_REQUESTS: int = _cfg["ai"].get("max_concurrent_requests", 2)
-
-GROQ_API_KEY: str = _cfg["ai"]["groq"]["api_key"]
-GROQ_MODEL: str = _cfg["ai"]["groq"]["model"]
 
 OPENROUTER_API_KEY: str = _cfg["ai"].get("openrouter", {}).get("api_key", "")
 OPENROUTER_MODEL: str = _cfg["ai"].get("openrouter", {}).get("model", "")
@@ -79,10 +75,6 @@ OPENROUTER_API_URL: str = _cfg["ai"].get("openrouter", {}).get(
 )
 OPENROUTER_SITE_URL: str = _cfg["ai"].get("openrouter", {}).get("site_url", "")
 OPENROUTER_APP_NAME: str = _cfg["ai"].get("openrouter", {}).get("app_name", "SinusSMP Support Bot")
-
-LOCAL_API_URL: str = _cfg["ai"]["local"]["api_url"]
-LOCAL_API_KEY: str = _cfg["ai"]["local"]["api_key"]
-LOCAL_MODEL: str = _cfg["ai"]["local"]["model"]
 
 # ── Proxy ────────────────────────────────────────────────────────────────────
 USE_PROXY: bool = _cfg["proxy"]["enabled"]

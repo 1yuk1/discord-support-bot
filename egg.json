@@ -7,7 +7,7 @@
     "exported_at": "2026-04-23T00:00:00.000Z",
     "name": "Discord Support Bot",
     "author": "1yuk1@github.com",
-    "description": "Discord бот поддержки с AI (Groq) и ChromaDB. Автоматически скачивает код из GitHub при первом запуске.",
+    "description": "Discord бот поддержки с AI (OpenRouter) и ChromaDB. Автоматически скачивает код из GitHub при первом запуске.",
     "features": null,
     "docker_images": {
         "Discord Support Bot": "ghcr.io/1yuk1/discord-support-bot:latest"
@@ -39,9 +39,9 @@
             "field_type": "text"
         },
         {
-            "name": "Groq API Key",
-            "description": "API ключ Groq для работы AI",
-            "env_variable": "GROQ_API_KEY",
+            "name": "OpenRouter API Key",
+            "description": "API ключ OpenRouter для работы AI",
+            "env_variable": "OPENROUTER_API_KEY",
             "default_value": "",
             "user_viewable": true,
             "user_editable": true,
@@ -70,7 +70,7 @@
         },
         {
             "name": "Use Proxy",
-            "description": "Включить HTTP прокси для Discord и Groq (true/false)",
+            "description": "Включить HTTP прокси для Discord и OpenRouter (true/false)",
             "env_variable": "USE_PROXY",
             "default_value": "false",
             "user_viewable": true,
