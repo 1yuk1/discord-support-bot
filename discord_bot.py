@@ -57,15 +57,16 @@ BOT_ROLE_ID = config.BOT_ROLE_ID
 BOT_ROLE_IDS = set(config.BOT_ROLE_IDS)
 IGNORED_ROLE_IDS = set(config.IGNORED_ROLE_IDS)
 LOGS_PATH = config.LOGS_PATH
-LOG_TICKET_FILENAME_TEMPLATE = config.LOG_TICKET_FILENAME_TEMPLATE
-LOG_TICKET_DATETIME_FORMAT = config.LOG_TICKET_DATETIME_FORMAT
-LOG_TICKET_FILE_EXTENSION = config.LOG_TICKET_FILE_EXTENSION
+LOG_ACTIVE_DIR = config.LOG_ACTIVE_DIR
 LOG_ARCHIVE_ENABLED = config.LOG_ARCHIVE_ENABLED
 LOG_ARCHIVE_DIR = config.LOG_ARCHIVE_DIR
 LOG_ARCHIVE_INTERVAL_HOURS = config.LOG_ARCHIVE_INTERVAL_HOURS
-LOG_ARCHIVE_AFTER_HOURS = config.LOG_ARCHIVE_AFTER_HOURS
+LOG_ARCHIVE_SAFETY_NET_DAYS = config.LOG_ARCHIVE_SAFETY_NET_DAYS
 LOG_ARCHIVE_DATE_FORMAT = config.LOG_ARCHIVE_DATE_FORMAT
 LOG_ARCHIVE_FILENAME_TEMPLATE = config.LOG_ARCHIVE_FILENAME_TEMPLATE
+LOG_TICKET_CATEGORIES = config.LOG_TICKET_CATEGORIES
+VISION_MODEL = config.VISION_MODEL
+VISION_ENABLED = config.VISION_ENABLED
 RATE_LIMIT_ENABLED = config.RATE_LIMIT_ENABLED
 CHANNEL_COOLDOWN = config.CHANNEL_COOLDOWN
 DUPLICATE_CHECK_TIME = config.DUPLICATE_CHECK_TIME
@@ -83,6 +84,7 @@ STATE_TTL_SECONDS = config.STATE_TTL_SECONDS
 # ЛОГИ ДЛЯ РАЗРАБОТЧИКОВ
 # ==============================================================================
 Path(LOGS_PATH).mkdir(parents=True, exist_ok=True)
+Path(LOG_ACTIVE_DIR).mkdir(parents=True, exist_ok=True)
 Path(LOG_ARCHIVE_DIR).mkdir(parents=True, exist_ok=True)
 
 
@@ -374,29 +376,19 @@ def sanitize_filename_part(value, fallback="ticket"):
     return cleaned[:120] or fallback
 
 
-def get_channel_created_at(channel):
-    created_at = getattr(channel, "created_at", None)
-    if created_at is None:
-        return datetime.now().astimezone()
-    try:
-        return created_at.astimezone()
-    except Exception:
-        return created_at
-
-
-def get_log_filename(channel):
+def get_log_filename(channel) -> str:
     channel_id = getattr(channel, "id", "unknown")
-    channel_name = sanitize_filename_part(getattr(channel, "name", ""), f"ticket-{channel_id}")
-    created_at = get_channel_created_at(channel)
-    created_at_text = sanitize_filename_part(created_at.strftime(LOG_TICKET_DATETIME_FORMAT), "unknown-date")
-    filename = LOG_TICKET_FILENAME_TEMPLATE.format(
-        channel_id=channel_id,
-        channel_name=channel_name,
-        created_at=created_at_text,
-    )
-    filename = sanitize_filename_part(filename, f"ticket-{channel_id}-{created_at_text}")
-    extension = sanitize_filename_part(LOG_TICKET_FILE_EXTENSION, "json").lstrip(".")
-    return str(Path(LOGS_PATH) / f"{filename}.{extension}")
+    return str(Path(LOG_ACTIVE_DIR) / f"ticket-{channel_id}.json")
+
+
+def get_ticket_category(channel_name: str) -> str:
+    name_lower = (channel_name or "").lower()
+    for category, patterns in LOG_TICKET_CATEGORIES.items():
+        if not patterns:
+            continue
+        if any(p in name_lower for p in patterns):
+            return category
+    return "other"
 
 
 def load_ticket_log(channel):
@@ -415,6 +407,7 @@ def load_ticket_log(channel):
             return []
     return []
 
+
 def save_ticket_log(channel, log_data):
     filename = get_log_filename(channel)
     try:
@@ -427,6 +420,7 @@ def save_ticket_log(channel, log_data):
             channel_id=getattr(channel, "id", "unknown"),
             file=filename
         )
+
 
 def log_message(channel, user_id, username, message, bot_response=None, is_human_transfer=False, transfer_reason=None, image_urls=None):
     log_entry = {
@@ -443,89 +437,87 @@ def log_message(channel, user_id, username, message, bot_response=None, is_human
         log_entry["transfer_reason"] = transfer_reason
     if image_urls:
         log_entry["image_urls"] = image_urls
-    
+
     log_data = load_ticket_log(channel)
     log_data.append(log_entry)
     save_ticket_log(channel, log_data)
 
 
-def iter_ticket_logs_for_archive():
+def archive_closed_ticket(channel):
+    """Архивирует лог закрытого тикета. Вызывается при удалении канала."""
     if not LOG_ARCHIVE_ENABLED:
-        return []
+        return
 
-    logs_dir = Path(LOGS_PATH)
-    snapshot_path = Path(STATE_SNAPSHOT_FILE).resolve()
-    archive_dir = Path(LOG_ARCHIVE_DIR).resolve()
-    extension = sanitize_filename_part(LOG_TICKET_FILE_EXTENSION, "json").lstrip(".")
-    cutoff_time = time.time() - max(LOG_ARCHIVE_AFTER_HOURS, 0) * 60 * 60
-    ticket_logs = []
+    channel_id = getattr(channel, "id", "unknown")
+    channel_name = getattr(channel, "name", "") or ""
+    log_path = Path(get_log_filename(channel))
 
-    for path in logs_dir.glob(f"*.{extension}"):
+    if not log_path.exists():
+        return
+
+    category = get_ticket_category(channel_name)
+    category_dir = Path(LOG_ARCHIVE_DIR) / sanitize_filename_part(category, "other")
+    category_dir.mkdir(parents=True, exist_ok=True)
+
+    date_key = datetime.now().strftime(LOG_ARCHIVE_DATE_FORMAT)
+    archive_name = LOG_ARCHIVE_FILENAME_TEMPLATE.format(date=date_key, count=1)
+    archive_name = sanitize_filename_part(archive_name, f"tickets-{date_key}.zip")
+    if not archive_name.lower().endswith(".zip"):
+        archive_name = f"{archive_name}.zip"
+    archive_path = category_dir / archive_name
+
+    try:
+        with zipfile.ZipFile(archive_path, "a", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(log_path, arcname=log_path.name)
+        log_path.unlink(missing_ok=True)
+        logger.info(
+            "Тикет заархивирован | channel_id=%s | category=%s | archive=%s",
+            channel_id, category, archive_path
+        )
+    except Exception as e:
+        log_exception(
+            "Не удалось заархивировать тикет",
+            e,
+            channel_id=channel_id,
+            archive=str(archive_path)
+        )
+
+
+def archive_orphaned_ticket_logs():
+    """Safety-net: архивирует файлы без активности дольше LOG_ARCHIVE_SAFETY_NET_DAYS."""
+    if not LOG_ARCHIVE_ENABLED or LOG_ARCHIVE_SAFETY_NET_DAYS <= 0:
+        return
+
+    active_dir = Path(LOG_ACTIVE_DIR)
+    cutoff = time.time() - LOG_ARCHIVE_SAFETY_NET_DAYS * 24 * 3600
+
+    for log_path in active_dir.glob("ticket-*.json"):
         try:
-            resolved_path = path.resolve()
-        except Exception:
-            continue
-        if resolved_path == snapshot_path or archive_dir in resolved_path.parents:
-            continue
-        if path.name.startswith("developer."):
-            continue
-        try:
-            if path.stat().st_mtime > cutoff_time:
+            if log_path.stat().st_mtime > cutoff:
                 continue
         except OSError:
             continue
-        ticket_logs.append(path)
 
-    return ticket_logs
+        channel_name = log_path.stem.replace("ticket-", "")
+        category = "other"
 
+        category_dir = Path(LOG_ARCHIVE_DIR) / sanitize_filename_part(category, "other")
+        category_dir.mkdir(parents=True, exist_ok=True)
 
-def archive_ticket_logs():
-    ticket_logs = iter_ticket_logs_for_archive()
-    if not ticket_logs:
-        return
-
-    archive_groups = {}
-    for path in ticket_logs:
-        try:
-            date_key = datetime.fromtimestamp(path.stat().st_mtime).strftime(LOG_ARCHIVE_DATE_FORMAT)
-        except OSError:
-            continue
-        archive_groups.setdefault(date_key, []).append(path)
-
-    archive_dir = Path(LOG_ARCHIVE_DIR)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-
-    for date_key, paths in archive_groups.items():
-        count = len(paths)
-        archive_name = LOG_ARCHIVE_FILENAME_TEMPLATE.format(date=date_key, count=count)
-        archive_name = sanitize_filename_part(archive_name, f"tickets-{date_key}-{count}.zip")
+        date_key = datetime.fromtimestamp(log_path.stat().st_mtime).strftime(LOG_ARCHIVE_DATE_FORMAT)
+        archive_name = LOG_ARCHIVE_FILENAME_TEMPLATE.format(date=date_key, count=1)
+        archive_name = sanitize_filename_part(archive_name, f"tickets-{date_key}.zip")
         if not archive_name.lower().endswith(".zip"):
             archive_name = f"{archive_name}.zip"
-        archive_path = archive_dir / archive_name
-        if archive_path.exists():
-            suffix = datetime.now().strftime("%H-%M-%S")
-            archive_path = archive_dir / f"{archive_path.stem}-{suffix}{archive_path.suffix}"
+        archive_path = category_dir / archive_name
 
         try:
-            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
-                for path in paths:
-                    archive.write(path, arcname=path.name)
-            for path in paths:
-                path.unlink(missing_ok=True)
-            logger.info(
-                "Ticket logs archived | archive=%s | date=%s | count=%s",
-                archive_path,
-                date_key,
-                count
-            )
+            with zipfile.ZipFile(archive_path, "a", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(log_path, arcname=log_path.name)
+            log_path.unlink(missing_ok=True)
+            logger.info("Safety-net архивирование | file=%s | archive=%s", log_path.name, archive_path)
         except Exception as e:
-            log_exception(
-                "Не удалось архивировать ticket-логи",
-                e,
-                archive=str(archive_path),
-                date=date_key,
-                count=count
-            )
+            log_exception("Не удалось заархивировать осиротевший тикет", e, file=str(log_path))
 
 # ==============================================================================
 # ФУНКЦИИ AI
@@ -622,13 +614,47 @@ def _is_short_clarification(text: str) -> bool:
     return False
 
 
-def _build_user_content(text: str, image_urls: list[str] | None):
-    if not image_urls:
-        return text
-    parts = [{"type": "text", "text": text}]
+def describe_images(image_urls: list[str]) -> str:
+    """Скачивает картинки и описывает их через vision-модель."""
+    if not image_urls or not VISION_ENABLED:
+        return ""
+
+    content_parts = []
     for url in image_urls:
-        parts.append({"type": "image_url", "image_url": {"url": url}})
-    return parts
+        try:
+            resp = httpx.get(url, timeout=30, follow_redirects=True)
+            resp.raise_for_status()
+            import base64
+            mime = resp.headers.get("content-type", "image/png").split(";")[0].strip()
+            b64 = base64.b64encode(resp.content).decode()
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"}
+            })
+        except Exception as e:
+            log_exception("Не удалось скачать изображение для vision", e, url=url[:200])
+
+    if not content_parts:
+        return ""
+
+    content_parts.insert(0, {
+        "type": "text",
+        "text": "Опиши кратко что изображено на скриншоте(ах). Это скриншот из тикета поддержки Minecraft-сервера. Описывай только то что видишь — текст ошибок, интерфейс, инвентарь, чеки оплаты и т.п."
+    })
+
+    try:
+        response = openai_client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[{"role": "user", "content": content_parts}],
+            temperature=0.1,
+            max_tokens=512
+        )
+        description = (response.choices[0].message.content or "").strip()
+        logger.info("Vision описание получено | model=%s | preview=%s", VISION_MODEL, description[:200])
+        return description
+    except Exception as e:
+        log_exception("Ошибка vision-модели", e, model=VISION_MODEL)
+        return ""
 
 
 def generate_answer(user_input, conversation_history, image_urls=None):
@@ -638,6 +664,18 @@ def generate_answer(user_input, conversation_history, image_urls=None):
     Каждый ход подаётся отдельным сообщением, чтобы reasoning-модели (gpt-oss и т.п.)
     корректно отслеживали контекст диалога.
     """
+    only_image = (user_input == "[Игрок прислал скриншот]")
+
+    # Vision: описываем картинки через отдельную модель, добавляем к тексту
+    if image_urls and VISION_ENABLED:
+        description = describe_images(image_urls)
+        if description:
+            user_input = f"{'' if only_image else user_input + chr(10)}[Скриншот от игрока]\n{description}"
+            only_image = False
+        elif only_image:
+            return "Не могу просмотреть скриншот. Пожалуйста, опишите проблему текстом."
+    elif image_urls and only_image:
+        return "Скриншот получен, но просмотр изображений не настроен. Пожалуйста, опишите проблему текстом."
     # Короткие реплики («60», «да», «шлемофон», «вернити их») — НЕ идём в RAG,
     # иначе эмбеддер вытащит случайный документ с тем же числом/словом и LLM
     # уверенно ответит невпопад. Контекст оставляем пустым: модель должна
@@ -719,10 +757,7 @@ def generate_answer(user_input, conversation_history, image_urls=None):
 
     messages.append({
         "role": "user",
-        "content": _build_user_content(
-            f"{context_block}\n\nТЕКУЩИЙ ВОПРОС ИГРОКА:\n{user_input}",
-            image_urls
-        )
+        "content": f"{context_block}\n\nТЕКУЩИЙ ВОПРОС ИГРОКА:\n{user_input}"
     })
 
     current_model = get_current_model()
@@ -823,6 +858,7 @@ def create_channel_state():
         "last_answer_time": 0,
         "user_messages": deque(),
         "processed_message_ids": set(),
+        "last_processed_message_id": None,
         "human_mode_ping_times": deque(),
         # Шапка открытия тикета приходит от системного бота 1-2 раза подряд —
         # отвечаем на неё максимум один раз за канал.
@@ -854,6 +890,7 @@ def save_conversation_state(force=False):
             "human_mode": bool(data.get("human_mode")),
             "ticket_opening_handled": bool(data.get("ticket_opening_handled")),
             "last_activity": data.get("last_activity", time.time()),
+            "last_processed_message_id": data.get("last_processed_message_id"),
         }
 
     try:
@@ -893,6 +930,12 @@ def load_conversation_state():
         state["human_mode"] = bool(data.get("human_mode"))
         state["ticket_opening_handled"] = bool(data.get("ticket_opening_handled"))
         state["last_activity"] = last_activity
+        last_msg_id = data.get("last_processed_message_id")
+        if last_msg_id is not None:
+            try:
+                state["processed_message_ids"].add(int(last_msg_id))
+            except (TypeError, ValueError):
+                pass
         conversation_histories[channel_id] = state
         restored += 1
         if state["human_mode"]:
@@ -1271,7 +1314,7 @@ async def cleanup_conversation_state_loop():
 
 @tasks.loop(hours=max(LOG_ARCHIVE_INTERVAL_HOURS, 1))
 async def archive_ticket_logs_loop():
-    archive_ticket_logs()
+    archive_orphaned_ticket_logs()
 
 @bot.event
 async def on_ready():
@@ -1303,6 +1346,7 @@ async def on_error(event_method, *args, **kwargs):
 
 @bot.event
 async def on_guild_channel_delete(channel):
+    archive_closed_ticket(channel)
     if conversation_histories.pop(getattr(channel, "id", None), None) is not None:
         mark_state_dirty()
         save_conversation_state(force=True)
@@ -1403,9 +1447,10 @@ async def on_message(message):
     )
 
     channel_data["processed_message_ids"].add(message.id)
+    channel_data["last_processed_message_id"] = message.id
     if len(channel_data["processed_message_ids"]) > 200:
         channel_data["processed_message_ids"] = set(list(channel_data["processed_message_ids"])[-100:])
-    
+
     transfer_reason = None
     transfer_requested = is_user_human_transfer(message_text)
     if transfer_requested:

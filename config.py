@@ -67,6 +67,8 @@ EMBEDDING_MODEL_TYPE: str = _cfg["ai"].get("embedding_model_type", "bge")
 SEARCH_TOP_K: int = _cfg["ai"].get("search_top_k", 2)
 AI_REQUEST_TIMEOUT_SECONDS: int = _cfg["ai"].get("request_timeout_seconds", 90)
 AI_MAX_CONCURRENT_REQUESTS: int = _cfg["ai"].get("max_concurrent_requests", 2)
+VISION_MODEL: str = _cfg["ai"].get("vision_model", "")
+VISION_ENABLED: bool = bool(VISION_MODEL)
 
 OPENROUTER_API_KEY: str = _cfg["ai"].get("openrouter", {}).get("api_key", "")
 OPENROUTER_MODEL: str = _cfg["ai"].get("openrouter", {}).get("model", "")
@@ -91,21 +93,23 @@ AUTO_UPDATE_CHROMA_DB: bool = _cfg["paths"].get("auto_update_chroma_db", True)
 
 # ── Ticket logs ──────────────────────────────────────────────────────────────
 _logs_cfg = _cfg.get("logs", {})
-LOG_TICKET_FILENAME_TEMPLATE: str = _logs_cfg.get(
-    "ticket_filename_template",
-    "{channel_name}-{created_at}",
-)
-LOG_TICKET_DATETIME_FORMAT: str = _logs_cfg.get("ticket_datetime_format", "%d.%m-%H-%M")
-LOG_TICKET_FILE_EXTENSION: str = _logs_cfg.get("ticket_file_extension", "json").lstrip(".")
+LOG_ACTIVE_DIR: str = str(BASE_DIR / _logs_cfg.get("active_dir", "logs/active"))
 LOG_ARCHIVE_ENABLED: bool = _logs_cfg.get("archive_enabled", True)
 LOG_ARCHIVE_DIR: str = str(BASE_DIR / _logs_cfg.get("archive_dir", "logs/archives"))
 LOG_ARCHIVE_INTERVAL_HOURS: int = _logs_cfg.get("archive_interval_hours", 24)
-LOG_ARCHIVE_AFTER_HOURS: int = _logs_cfg.get("archive_after_hours", 24)
+LOG_ARCHIVE_SAFETY_NET_DAYS: int = _logs_cfg.get("archive_safety_net_days", 7)
 LOG_ARCHIVE_DATE_FORMAT: str = _logs_cfg.get("archive_date_format", "%d.%m")
 LOG_ARCHIVE_FILENAME_TEMPLATE: str = _logs_cfg.get(
     "archive_filename_template",
     "tickets-{date}-{count}tickets.zip",
 )
+
+_categories_raw = _logs_cfg.get("categories", {})
+LOG_TICKET_CATEGORIES: dict[str, list[str]] = {
+    cat: [p.lower() for p in patterns]
+    for cat, patterns in _categories_raw.items()
+    if isinstance(patterns, list)
+}
 
 # ── Rate Limit ───────────────────────────────────────────────────────────────
 _rate_limit_cfg = _cfg.get("rate_limit", {})

@@ -11,6 +11,7 @@ ignored_role_ids = "0"
 reply_footer = "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. Чтобы позвать человека, напишите: позови человека"
 
 [ai]
+vision_model = ""
 embedding_model = "intfloat/multilingual-e5-large-instruct"
 embedding_model_type = "e5-instruct"
 search_top_k = 4
@@ -38,15 +39,18 @@ logs = "logs"
 auto_update_chroma_db = true
 
 [logs]
-ticket_filename_template = "{channel_name}-{created_at}"
-ticket_datetime_format = "%d.%m-%H-%M"
-ticket_file_extension = "json"
-archive_enabled = true
+active_dir = "logs/active"
 archive_dir = "logs/archives"
+archive_enabled = true
 archive_interval_hours = 24
-archive_after_hours = 24
+archive_safety_net_days = 7
 archive_date_format = "%d.%m"
 archive_filename_template = "tickets-{date}-{count}tickets.zip"
+
+[logs.categories]
+donate = ["donate", "донат", "boosty", "покупка"]
+ban = ["ban", "бан", "разбан", "мут"]
+other = []
 
 [rate_limit]
 enabled = true
