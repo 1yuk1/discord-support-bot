@@ -11,7 +11,6 @@ ignored_role_ids = "0"
 reply_footer = "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. Чтобы позвать человека, напишите: позови человека"
 
 [ai]
-vision_model = ""
 embedding_model = "intfloat/multilingual-e5-large-instruct"
 embedding_model_type = "e5-instruct"
 search_top_k = 4
