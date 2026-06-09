@@ -18,6 +18,24 @@ USER_HUMAN_TRANSFER_PHRASES = (
     "переведи на специалиста",
     "передать человеку",
     "передаю тикет",
+    # английские фразы
+    "call admin",
+    "call moderator",
+    "call mod",
+    "real person",
+    "human support",
+    "talk to admin",
+    "talk to moderator",
+    "talk to a person",
+    "talk to human",
+    "speak to admin",
+    "speak to human",
+    "speak to a person",
+    "contact admin",
+    "need admin",
+    "want admin",
+    "want human",
+    "want a real person",
 )
 
 LLM_TRANSFER_MARKERS = (
@@ -51,6 +69,14 @@ FORCE_HUMAN_KEYWORDS = (
     "снимите мут",
     "убери мут",
     "убрать мут",
+    "сброс пароля",
+    "сбросить пароль",
+    "забыл пароль",
+    "восстановить пароль",
+    "reset password",
+    "forgot password",
+    "recover account",
+    "account recovery",
 )
 
 
