@@ -1,0 +1,122 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-04-23T00:00:00.000Z",
+    "name": "Discord Support Bot",
+    "author": "1yuk1@github.com",
+    "description": "Discord бот поддержки с AI (OpenRouter) и ChromaDB. Автоматически скачивает код из GitHub при первом запуске.",
+    "features": null,
+    "docker_images": {
+        "Discord Support Bot": "ghcr.io/1yuk1/discord-support-bot:latest"
+    },
+    "file_denylist": [],
+    "startup": "bash /entrypoint.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\"done\": \"Бот запущен\"}",
+        "logs": "{\"custom\": false, \"location\": \"logs/latest.log\"}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "container": "ghcr.io/1yuk1/discord-support-bot:latest",
+            "entrypoint": "bash",
+            "script": "#!/bin/bash\ncd /mnt/server\nmkdir -p chroma_db logs model_cache\necho \"Installation complete\""
+        }
+    },
+    "variables": [
+        {
+            "name": "Discord Token",
+            "description": "Токен Discord бота из Developer Portal",
+            "env_variable": "DISCORD_TOKEN",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "OpenRouter API Key",
+            "description": "API ключ OpenRouter для работы AI",
+            "env_variable": "OPENROUTER_API_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Ticket Category ID",
+            "description": "ID категории Discord для тикетов. 0 = бот отвечает во всех каналах.",
+            "env_variable": "TICKET_CATEGORY_ID",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Bot Role ID",
+            "description": "ID роли бота. 0 = без ограничений по роли.",
+            "env_variable": "BOT_ROLE_ID",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Use Proxy",
+            "description": "Включить HTTP прокси для Discord и OpenRouter (true/false)",
+            "env_variable": "USE_PROXY",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Host",
+            "description": "IP-адрес или хост прокси-сервера",
+            "env_variable": "PROXY_HOST",
+            "default_value": "127.0.0.1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Port",
+            "description": "Порт прокси-сервера",
+            "env_variable": "PROXY_PORT",
+            "default_value": "10808",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Username",
+            "description": "Логин для прокси (оставить пустым если не нужен)",
+            "env_variable": "PROXY_USERNAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Password",
+            "description": "Пароль для прокси (оставить пустым если не нужен)",
+            "env_variable": "PROXY_PASSWORD",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        }
+    ]
+}

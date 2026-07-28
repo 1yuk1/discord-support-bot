@@ -1,0 +1,36 @@
+[
+  {
+    "id": "bot_verification",
+    "question": "Не прошел проверку на бота / на подлинность",
+    "synonyms": [
+      "не прошел проверку подлинности",
+      "вы не прошли проверку на бота",
+      "ошибка верификации",
+      "проверка на подлинность не удалась",
+      "verification failed",
+      "не удается пройти проверку",
+      "подождите несколько секунд перед повторной попыткой"
+    ],
+    "category": "authentication",
+    "priority": "high",
+    "for_llm": {
+      "problem": "Игрок не прошел проверку на бота при входе на сервер",
+      "diagnostics": [
+        "Какая у вас версия Minecraft? (точно ли Vanilla {SERVER_RECOMMENDED_VERSION}?)",
+        "Пробовали ли перезапустить лаунчер?",
+        "Есть ли установленные моды? (OptiFine, Forge, Fabric)"
+      ],
+      "quick_answer": "Попробуйте зайти с версии Vanilla {SERVER_RECOMMENDED_VERSION} без модов.",
+      "full_solution": "Проблема скорее всего связана с модами игрока. Попросите зайти на сервер с версии Minecraft Vanilla {SERVER_RECOMMENDED_VERSION} без каких-либо модов.",
+      "steps": [
+        "1. Попросите зайти на сервер с версии Vanilla {SERVER_RECOMMENDED_VERSION}",
+        "2. Временно отключите все моды (OptiFine, Forge, Fabric)",
+        "3. Перезапустите лаунчер",
+        "4. Попробуйте подключиться снова",
+        "5. Если не помогло — передайте техподдержке"
+      ],
+      "transfer_to_human": false,
+      "immediate_action": "Попросить проверить версию Minecraft и отключить моды"
+    }
+  }
+]

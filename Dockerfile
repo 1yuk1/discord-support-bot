@@ -1,0 +1,22 @@
+FROM python:3.14-slim
+
+WORKDIR /home/container
+
+ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_cache
+ENV USER=root
+ENV HF_HOME=/home/container/model_cache
+ENV TRANSFORMERS_CACHE=/home/container/model_cache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p chroma_db logs model_cache
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]
