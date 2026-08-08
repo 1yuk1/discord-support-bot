@@ -71,8 +71,15 @@ def test_start_script_regenerates_settings():
     """Настройки обязаны пересоздаваться каждый старт."""
     content = START_SCRIPT.read_text(encoding="utf-8")
     assert "python scripts/generate_settings.py" in content
-    # Условия «только если файла нет» быть не должно.
-    assert 'if [ ! -f "settings.toml" ]' not in content
+    # Генерация не должна быть под условием «только если файла нет».
+    assert 'if ! python scripts/generate_settings.py' in content
+
+
+def test_start_script_stops_when_settings_generation_fails():
+    """Иначе бот падал бы позже с неочевидной ошибкой чтения конфига."""
+    content = START_SCRIPT.read_text(encoding="utf-8")
+    assert "Бот не запущен: не удалось создать settings.toml." in content
+    assert "settings.toml не появился после генерации" in content
 
 
 def test_start_script_writes_signature_only_after_success():

@@ -93,21 +93,67 @@ def id_list(*names: str) -> str:
     return "[]"
 
 
-def require(name: str, placeholder: str) -> str:
-    value = env(name)
-    if not value or value == placeholder:
+# Обязательные переменные и их placeholder-значения из egg.json.
+REQUIRED_VARS = (
+    ("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN"),
+    ("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY"),
+)
+
+# Переменные, которые бот умеет читать. Нужны только для диагностики:
+# показываем, что панель вообще передала в контейнер.
+KNOWN_OPTIONAL_VARS = (
+    "OPENROUTER_MODEL",
+    "TICKET_CATEGORY_IDS",
+    "TICKET_CATEGORY_ID",
+    "BOT_ROLE_IDS",
+    "BOT_ROLE_ID",
+    "IGNORED_ROLE_IDS",
+    "EMBEDDING_MODEL",
+    "USE_PROXY",
+    "BOT_AUTO_UPDATE",
+)
+
+
+def check_required() -> None:
+    """Проверяет все обязательные переменные сразу.
+
+    Сообщать про них по одной неудобно: после исправления первой запуск
+    падает на второй. Значения переменных не печатаем — это секреты.
+    """
+    missing = [
+        name
+        for name, placeholder in REQUIRED_VARS
+        if not env(name) or env(name) == placeholder
+    ]
+    if not missing:
+        return
+
+    print("Ошибка: не заданы обязательные переменные окружения:", file=sys.stderr)
+    for name in missing:
+        print(f"   - {name}", file=sys.stderr)
+    print(
+        "\n   Задайте их в Pterodactyl: Startup -> Environment Variables,\n"
+        "   затем перезапустите сервер.",
+        file=sys.stderr,
+    )
+
+    provided = [name for name in KNOWN_OPTIONAL_VARS if env(name)]
+    if provided:
+        print(f"\n   Панель передала: {', '.join(provided)}", file=sys.stderr)
+    else:
         print(
-            f"Ошибка: переменная {name} не задана.\n"
-            f"   Добавьте её в Pterodactyl: Startup -> Environment Variables",
+            "\n   Панель не передала ни одной известной переменной.\n"
+            "   Похоже, после импорта egg.json значения сбросились — "
+            "заполните их заново.",
             file=sys.stderr,
         )
-        raise SystemExit(1)
-    return value
+
+    raise SystemExit(1)
 
 
 def build() -> str:
-    token = require("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN")
-    api_key = require("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY")
+    token = env("DISCORD_TOKEN")
+    api_key = env("OPENROUTER_API_KEY")
 
     return f"""# Сгенерирован автоматически из переменных окружения при старте контейнера.
 # Правки здесь будут потеряны при следующем рестарте.
@@ -218,6 +264,7 @@ def check_override() -> None:
 
 
 def main() -> None:
+    check_required()
     content = build()
 
     # Проверяем результат до записи: битый файл на диске означает,

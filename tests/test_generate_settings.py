@@ -53,19 +53,60 @@ def test_minimal_config_is_valid(tmp_path):
     assert config["proxy"]["enabled"] is False
 
 
-def test_missing_token_fails(tmp_path):
+def run_expecting_failure(tmp_path, **env_overrides):
     target = tmp_path / "settings.toml"
+    env = {**BASE_ENV, "SETTINGS_PATH": str(target)}
+    env.update({key: str(value) for key, value in env_overrides.items()})
+
     result = subprocess.run(
         [sys.executable, "-X", "utf8", str(SCRIPT)],
-        env={**BASE_ENV, "DISCORD_TOKEN": "", "SETTINGS_PATH": str(target)},
+        env=env,
         cwd=tmp_path,
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
     assert result.returncode == 1
-    assert "DISCORD_TOKEN" in result.stderr
     assert not target.exists()
+    return result.stderr
+
+
+def test_missing_token_fails(tmp_path):
+    stderr = run_expecting_failure(tmp_path, DISCORD_TOKEN="")
+    assert "DISCORD_TOKEN" in stderr
+
+
+def test_all_missing_variables_reported_at_once(tmp_path):
+    """Сообщать по одной неудобно: запуск падал бы на каждой по очереди."""
+    stderr = run_expecting_failure(tmp_path, DISCORD_TOKEN="", OPENROUTER_API_KEY="")
+    assert "DISCORD_TOKEN" in stderr
+    assert "OPENROUTER_API_KEY" in stderr
+
+
+def test_placeholder_value_rejected(tmp_path):
+    stderr = run_expecting_failure(tmp_path, DISCORD_TOKEN="YOUR_DISCORD_TOKEN")
+    assert "DISCORD_TOKEN" in stderr
+
+
+def test_empty_environment_hints_at_egg_import(tmp_path):
+    """Частый случай: после импорта egg.json значения переменных сбросились."""
+    stderr = run_expecting_failure(tmp_path, DISCORD_TOKEN="", OPENROUTER_API_KEY="")
+    assert "egg.json" in stderr
+
+
+def test_provided_variables_listed_for_diagnostics(tmp_path):
+    stderr = run_expecting_failure(
+        tmp_path, OPENROUTER_API_KEY="", USE_PROXY="false", OPENROUTER_MODEL="test"
+    )
+    assert "Панель передала" in stderr
+    assert "USE_PROXY" in stderr
+
+
+def test_secret_values_never_printed(tmp_path):
+    """В логи панели не должны попадать значения токенов."""
+    secret = "super-secret-token-value"
+    stderr = run_expecting_failure(tmp_path, DISCORD_TOKEN=secret, OPENROUTER_API_KEY="")
+    assert secret not in stderr
 
 
 @pytest.mark.parametrize(

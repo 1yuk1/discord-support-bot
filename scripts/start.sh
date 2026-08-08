@@ -18,7 +18,17 @@ mkdir -p chroma_db logs logs/active logs/archives model_cache
 # применялись после обычного рестарта. Раньше файл создавался только при
 # отсутствии, и изменения не применялись никогда.
 echo "Генерация settings.toml из переменных окружения..."
-python scripts/generate_settings.py
+if ! python scripts/generate_settings.py; then
+    echo "" >&2
+    echo "Бот не запущен: не удалось создать settings.toml." >&2
+    echo "Причина указана выше. Исправьте переменные в панели и перезапустите." >&2
+    exit 1
+fi
+
+if [ ! -f "settings.toml" ]; then
+    echo "Бот не запущен: settings.toml не появился после генерации." >&2
+    exit 1
+fi
 
 # ── База знаний ──────────────────────────────────────────────────────────────
 echo "Проверка базы знаний ChromaDB..."
