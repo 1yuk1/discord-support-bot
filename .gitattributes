@@ -1,0 +1,17 @@
+# Нормализация переводов строк.
+* text=auto eol=lf
+
+# Shell-скрипты обязаны быть с LF: CRLF даёт "bad interpreter" в Linux.
+*.sh text eol=lf
+
+# Данные и промпты читает Python, LF безопаснее для сравнения подписей.
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+
+# Бинарные файлы не трогать.
+*.zip binary
+*.bin binary
+*.sqlite3 binary

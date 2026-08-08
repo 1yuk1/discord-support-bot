@@ -4,10 +4,10 @@
         "version": "PTDL_v2",
         "update_url": null
     },
-    "exported_at": "2026-04-23T00:00:00.000Z",
+    "exported_at": "2026-08-08T00:00:00.000Z",
     "name": "Discord Support Bot",
     "author": "1yuk1@github.com",
-    "description": "Discord бот поддержки с AI (OpenRouter) и ChromaDB. Автоматически скачивает код из GitHub при первом запуске.",
+    "description": "Discord бот поддержки с AI (OpenRouter) и базой знаний ChromaDB. Код обновляется из GitHub при каждом запуске, settings.toml генерируется из переменных ниже.",
     "features": null,
     "docker_images": {
         "Discord Support Bot": "ghcr.io/1yuk1/discord-support-bot:latest"
@@ -24,7 +24,7 @@
         "installation": {
             "container": "ghcr.io/1yuk1/discord-support-bot:latest",
             "entrypoint": "bash",
-            "script": "#!/bin/bash\ncd /mnt/server\nmkdir -p chroma_db logs model_cache\necho \"Installation complete\""
+            "script": "#!/bin/bash\ncd /mnt/server\nmkdir -p chroma_db logs logs/active logs/archives model_cache knowledge prompts\necho \"Installation complete\""
         }
     },
     "variables": [
@@ -49,9 +49,19 @@
             "field_type": "text"
         },
         {
-            "name": "Ticket Category ID",
-            "description": "ID категории Discord для тикетов. 0 = бот отвечает во всех каналах.",
-            "env_variable": "TICKET_CATEGORY_ID",
+            "name": "OpenRouter Model",
+            "description": "Модель для ответов, например mimo-2.5-pro или openai/gpt-4o-mini",
+            "env_variable": "OPENROUTER_MODEL",
+            "default_value": "mimo-2.5-pro",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Ticket Category IDs",
+            "description": "ID категорий Discord с тикетами через запятую. Пусто или 0 = бот отвечает во всех каналах.",
+            "env_variable": "TICKET_CATEGORY_IDS",
             "default_value": "0",
             "user_viewable": true,
             "user_editable": true,
@@ -59,13 +69,133 @@
             "field_type": "text"
         },
         {
-            "name": "Bot Role ID",
-            "description": "ID роли бота. 0 = без ограничений по роли.",
-            "env_variable": "BOT_ROLE_ID",
+            "name": "Bot Role IDs",
+            "description": "ID ролей, которые должны быть у бота для ответа. Пусто или 0 = без ограничений.",
+            "env_variable": "BOT_ROLE_IDS",
             "default_value": "0",
             "user_viewable": true,
             "user_editable": true,
             "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Ignored Role IDs",
+            "description": "ID ролей, сообщения которых бот игнорирует (админы, модераторы). Через запятую.",
+            "env_variable": "IGNORED_ROLE_IDS",
+            "default_value": "0",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Embedding Model",
+            "description": "Модель для поиска по базе знаний. ВНИМАНИЕ: смена модели требует переиндексации, она произойдёт автоматически при следующем запуске.",
+            "env_variable": "EMBEDDING_MODEL",
+            "default_value": "intfloat/multilingual-e5-large-instruct",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Embedding Model Type",
+            "description": "Тип префиксов для модели поиска: e5-instruct, e5 или bge",
+            "env_variable": "EMBEDDING_MODEL_TYPE",
+            "default_value": "e5-instruct",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:e5-instruct,e5,bge",
+            "field_type": "text"
+        },
+        {
+            "name": "Search Top K",
+            "description": "Сколько блоков базы знаний передавать в AI на один вопрос",
+            "env_variable": "SEARCH_TOP_K",
+            "default_value": "2",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Message Debounce Seconds",
+            "description": "Пауза перед ответом для склейки быстрых сообщений в один запрос. 0 = отключить.",
+            "env_variable": "MESSAGE_DEBOUNCE_SECONDS",
+            "default_value": "2.5",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Max History",
+            "description": "Сколько пар «вопрос-ответ» бот помнит в диалоге",
+            "env_variable": "RATE_LIMIT_MAX_HISTORY",
+            "default_value": "6",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Rate Limit Enabled",
+            "description": "Включить ограничения частоты ответов (true/false)",
+            "env_variable": "RATE_LIMIT_ENABLED",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Channel Cooldown",
+            "description": "Пауза в секундах между ответами бота в одном канале",
+            "env_variable": "RATE_LIMIT_CHANNEL_COOLDOWN",
+            "default_value": "5",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "AI Request Timeout",
+            "description": "Таймаут запроса к AI в секундах",
+            "env_variable": "AI_REQUEST_TIMEOUT_SECONDS",
+            "default_value": "90",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Recommended Version",
+            "description": "Рекомендуемая версия Minecraft, подставляется в ответы бота",
+            "env_variable": "SERVER_RECOMMENDED_VERSION",
+            "default_value": "1.21.10",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Server Site URL",
+            "description": "Адрес сайта сервера для ответов про донат",
+            "env_variable": "SERVER_SITE_URL",
+            "default_value": "https://sinussmp.com",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Auto Update From GitHub",
+            "description": "Обновлять код из GitHub при запуске (true/false)",
+            "env_variable": "BOT_AUTO_UPDATE",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
             "field_type": "text"
         },
         {

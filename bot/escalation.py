@@ -1,4 +1,14 @@
-USER_HUMAN_TRANSFER_PHRASES = (
+"""Определение необходимости передать тикет человеку.
+
+Единственный источник правды по фразам эскалации. Раньше рядом существовал
+неиспользуемый список [transfer].phrases в settings.toml — он был удалён,
+потому что содержал слишком широкие корни ("админ", "передам", "модер"),
+которые ловят обычные фразы вида "передам скрин оплаты" или
+"администрация уже ответила" и глушат бота на весь тикет.
+"""
+
+# Игрок явно просит человека.
+USER_HUMAN_TRANSFER_PHRASES: tuple[str, ...] = (
     "тех поддержка",
     "техподдержка",
     "переведи на человека",
@@ -38,12 +48,16 @@ USER_HUMAN_TRANSFER_PHRASES = (
     "want a real person",
 )
 
-LLM_TRANSFER_MARKERS = (
+# Маркеры в ответе LLM. Держать максимально узкими: широкая формулировка
+# ("обратитесь к специалисту") приводит к ложной эскалации на обычных ответах.
+LLM_TRANSFER_MARKERS: tuple[str, ...] = (
     "я передам ваш тикет старшему специалисту",
     "передам ваш тикет старшему специалисту",
 )
 
-FORCE_HUMAN_KEYWORDS = (
+# Темы, которые бот не должен разруливать сам: доступ к аккаунту, наказания,
+# возвраты. Здесь корни слов, а не полные фразы.
+FORCE_HUMAN_KEYWORDS: tuple[str, ...] = (
     "взлом",
     "взломал",
     "взломали",
@@ -79,6 +93,11 @@ FORCE_HUMAN_KEYWORDS = (
     "account recovery",
 )
 
+TRANSFER_ANSWER = (
+    "Я передам ваш тикет старшему специалисту. "
+    "Пожалуйста, ожидайте, в ближайшее свободное время вам ответят."
+)
+
 
 def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
     if not text:
@@ -88,12 +107,15 @@ def _contains_phrase(text: str, phrases: tuple[str, ...]) -> bool:
 
 
 def is_user_human_transfer(text: str) -> bool:
+    """Игрок явно просит перевести на человека."""
     return _contains_phrase(text, USER_HUMAN_TRANSFER_PHRASES)
 
 
 def is_llm_human_transfer(text: str) -> bool:
+    """Ответ LLM содержит обещание передать тикет человеку."""
     return _contains_phrase(text, LLM_TRANSFER_MARKERS)
 
 
 def should_force_human_transfer(text: str) -> bool:
+    """Тема требует человека независимо от формулировки игрока."""
     return _contains_phrase(text, FORCE_HUMAN_KEYWORDS)

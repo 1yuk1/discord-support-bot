@@ -1,11 +1,13 @@
-# Byte-compiled / optimized
+# Байт-код Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
-# Конфиг с секретами
+# Настройки с токенами
 settings.toml
+settings.local.toml
 
-# База данных и кэш
+# Данные: база знаний и кэш моделей
 chroma_db/
 model_cache/
 
