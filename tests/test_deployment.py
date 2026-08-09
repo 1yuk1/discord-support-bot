@@ -67,19 +67,33 @@ def test_data_directories_are_not_wiped():
         assert protected not in copied, f"{protected} затирается при обновлении"
 
 
-def test_start_script_regenerates_settings():
-    """Настройки обязаны пересоздаваться каждый старт."""
+def test_start_script_checks_settings():
     content = START_SCRIPT.read_text(encoding="utf-8")
     assert "python scripts/generate_settings.py" in content
-    # Генерация не должна быть под условием «только если файла нет».
     assert 'if ! python scripts/generate_settings.py' in content
 
 
 def test_start_script_stops_when_settings_generation_fails():
     """Иначе бот падал бы позже с неочевидной ошибкой чтения конфига."""
     content = START_SCRIPT.read_text(encoding="utf-8")
-    assert "Бот не запущен: не удалось создать settings.toml." in content
+    assert "Бот не запущен: проблема с settings.toml." in content
     assert "settings.toml не появился после генерации" in content
+
+
+def test_start_script_creates_data_directory():
+    """data/ нужен до старта: туда пишутся инциденты."""
+    content = START_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(r"^mkdir -p (.+)$", content, re.MULTILINE)
+    assert match, "не найден mkdir -p"
+    assert "data" in match.group(1).split()
+
+
+def test_data_directory_survives_code_update():
+    """Инциденты добавляются командой и не должны исчезать при автообновлении."""
+    content = ENTRYPOINT.read_text(encoding="utf-8")
+    match = re.search(r"for dir in ([^;]+); do", content)
+    copied = set(match.group(1).split())
+    assert "data" not in copied, "data/ затирается при обновлении кода"
 
 
 def test_start_script_writes_signature_only_after_success():

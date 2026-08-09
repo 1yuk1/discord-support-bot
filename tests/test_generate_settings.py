@@ -42,8 +42,8 @@ def generate(tmp_path, **env_overrides) -> dict:
     if result.returncode != 0:
         raise AssertionError(f"Генератор упал: {result.stderr}")
 
-    with open(target, "rb") as f:
-        return tomllib.load(f)
+    # utf-8-sig, как в bot.settings: файл может прийти с BOM после ручной правки.
+    return tomllib.loads(target.read_text(encoding="utf-8-sig"))
 
 
 def test_minimal_config_is_valid(tmp_path):
@@ -130,6 +130,27 @@ def test_boolean_variants(tmp_path, raw, expected):
     assert config["proxy"]["enabled"] is expected
 
 
+def test_unset_boolean_keeps_true_default(tmp_path):
+    """Незаданная переменная означает default, а не false.
+
+    Регрессия: пустая строка попадала в список false-значений, и все флаги с
+    default=True (напоминания, инциденты, рейт-лимит, архивация логов) молча
+    выключались, если панель их не передала.
+    """
+    config = generate(tmp_path)
+    assert config["reminders"]["enabled"] is True
+    assert config["incidents"]["enabled"] is True
+    assert config["rate_limit"]["enabled"] is True
+    assert config["logs"]["archive_enabled"] is True
+    assert config["knowledge"]["strict_embedding_check"] is True
+
+
+def test_explicit_false_still_wins(tmp_path):
+    config = generate(tmp_path, REMINDERS_ENABLED="false", INCIDENTS_ENABLED="no")
+    assert config["reminders"]["enabled"] is False
+    assert config["incidents"]["enabled"] is False
+
+
 @pytest.mark.parametrize("raw", ["not-a-number", "10808abc", "", "1.5"])
 def test_invalid_port_falls_back(tmp_path, raw):
     config = generate(tmp_path, PROXY_PORT=raw)
@@ -197,8 +218,63 @@ def test_broken_override_does_not_break_generation(tmp_path):
     assert config["discord"]["token"] == "test-token"
 
 
-def test_regenerates_over_existing_file(tmp_path):
-    """Главная эксплуатационная правка: файл перезаписывается каждый запуск."""
+def test_existing_file_is_not_overwritten(tmp_path):
+    """Главная эксплуатационная правка: ручные изменения переживают рестарт."""
     generate(tmp_path, OPENROUTER_MODEL="model-one")
+
+    target = tmp_path / "settings.toml"
+    manual = target.read_text(encoding="utf-8").replace("model-one", "model-edited-by-hand")
+    target.write_text(manual, encoding="utf-8")
+
     config = generate(tmp_path, OPENROUTER_MODEL="model-two")
+    assert config["ai"]["openrouter"]["model"] == "model-edited-by-hand"
+
+
+def test_force_regenerate_overwrites(tmp_path):
+    generate(tmp_path, OPENROUTER_MODEL="model-one")
+    config = generate(
+        tmp_path, OPENROUTER_MODEL="model-two", SETTINGS_FORCE_REGENERATE="true"
+    )
     assert config["ai"]["openrouter"]["model"] == "model-two"
+
+
+def test_existing_file_survives_empty_required_variables(tmp_path):
+    """Токен уже в файле — пустая переменная в панели не повод падать.
+
+    Раньше check_required валил запуск даже при полностью рабочем конфиге.
+    """
+    generate(tmp_path)
+    config = generate(tmp_path, DISCORD_TOKEN="", OPENROUTER_API_KEY="")
+    assert config["discord"]["token"] == "test-token"
+
+
+def test_existing_file_with_bom_is_accepted(tmp_path):
+    """Файл правят руками, а блокнот на Windows дописывает BOM.
+
+    tomllib падает на нём с невнятным «Invalid statement at line 1»,
+    поэтому чтение идёт через utf-8-sig.
+    """
+    generate(tmp_path)
+    target = tmp_path / "settings.toml"
+    content = target.read_text(encoding="utf-8")
+    target.write_text("\ufeff" + content, encoding="utf-8")
+
+    config = generate(tmp_path)
+    assert config["discord"]["token"] == "test-token"
+
+
+def test_broken_existing_file_fails_loudly(tmp_path):
+    """Битый TOML нельзя молча пропускать: бот всё равно не прочитает его."""
+    target = tmp_path / "settings.toml"
+    target.write_text("это [не] = валидный toml =", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8", str(SCRIPT)],
+        env={**BASE_ENV, "SETTINGS_PATH": str(target)},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 1
+    assert "синтаксическую ошибку" in result.stderr

@@ -34,8 +34,10 @@ def _read_toml(path: Path, required: bool) -> dict:
         return {}
 
     try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
+        # utf-8-sig, а не rb: файл правят руками, и редакторы на Windows
+        # дописывают BOM. tomllib на нём падает с невнятным
+        # «Invalid statement at line 1», хотя содержимое корректно.
+        return tomllib.loads(path.read_text(encoding="utf-8-sig"))
     except tomllib.TOMLDecodeError as exc:
         if required:
             _fail(f"{path.name} содержит синтаксическую ошибку: {exc}")
@@ -177,6 +179,16 @@ KNOWLEDGE_DIR: str = _as_path(
 )
 PROMPTS_DIR: str = _as_path(_paths_cfg.get("prompts"), "prompts")
 AUTO_UPDATE_CHROMA_DB: bool = bool(_paths_cfg.get("auto_update_chroma_db", True))
+# data/ — то, что бот пишет сам. Автообновление кода этот каталог не трогает,
+# в отличие от knowledge/ и prompts/, которые перезаливаются из репозитория.
+DATA_DIR: str = _as_path(_paths_cfg.get("data"), "data")
+
+# ── Incidents ────────────────────────────────────────────────────────────────
+# Известные проблемы («сервер лежит», «не работает вход»). Живут часы-дни,
+# поэтому не индексируются, а подмешиваются в системный промпт напрямую.
+_incidents_cfg = _section("incidents")
+INCIDENTS_ENABLED: bool = bool(_incidents_cfg.get("enabled", True))
+INCIDENTS_FILE: str = _as_path(_incidents_cfg.get("file"), "data/incidents.md")
 
 # ── Knowledge base ───────────────────────────────────────────────────────────
 _kb_cfg = _section("knowledge")
@@ -229,6 +241,82 @@ MESSAGE_DEBOUNCE_SECONDS: float = float(_rate_limit_cfg.get("message_debounce_se
 PING_SPAM_LIMIT: int = int(_rate_limit_cfg.get("ping_spam_limit", 3))
 PING_SPAM_WINDOW: int = int(_rate_limit_cfg.get("ping_spam_window", 300))
 
+# ── Reminders ────────────────────────────────────────────────────────────────
+# Напоминание персоналу, если игрок ждёт ответа слишком долго. Роли задаются
+# и глобально, и по категориям: на тестовом сервере роли ticket support может
+# не быть вовсе, и пинговать там нечего.
+_reminders_cfg = _section("reminders")
+REMINDERS_ENABLED: bool = bool(_reminders_cfg.get("enabled", True))
+REMINDER_STAFF_ROLE_IDS: list[int] = _parse_id_list(_reminders_cfg.get("staff_role_ids"))
+REMINDER_PING_ROLE_IDS: list[int] = _parse_id_list(_reminders_cfg.get("ping_role_ids"))
+REMINDER_IDLE_HOURS: float = float(_reminders_cfg.get("idle_hours", 1))
+REMINDER_REPEAT_HOURS: float = float(_reminders_cfg.get("repeat_hours", 6))
+REMINDER_MAX_PER_DAY: int = int(_reminders_cfg.get("max_per_day", 3))
+REMINDER_CHECK_INTERVAL_MINUTES: int = int(_reminders_cfg.get("check_interval_minutes", 10))
+REMINDER_EXCLUDED_CATEGORY_IDS: list[int] = _parse_id_list(
+    _reminders_cfg.get("excluded_category_ids")
+)
+# llm — текст пишет модель под конкретный тикет; static — фраза из списка ниже.
+REMINDER_MESSAGE_MODE: str = str(_reminders_cfg.get("message_mode", "llm")).lower()
+REMINDER_HISTORY_LIMIT: int = int(_reminders_cfg.get("history_limit", 25))
+
+_DEFAULT_REMINDER_PHRASES = [
+    "Благодарим за обращение. Ваш вопрос всё ещё в работе — решение занимает "
+    "чуть больше времени, чем мы рассчитывали. Спасибо за терпение.",
+    "Ваш тикет не забыт: мы продолжаем разбираться с обращением. "
+    "Благодарим за ожидание.",
+    "Обращение всё ещё в обработке. Спасибо, что ждёте — вам ответят, "
+    "как только появится свободное время.",
+]
+_phrases_raw = _reminders_cfg.get("phrases")
+REMINDER_PHRASES: list[str] = [
+    str(phrase).strip()
+    for phrase in (_phrases_raw if isinstance(_phrases_raw, list) else [])
+    if str(phrase).strip()
+] or _DEFAULT_REMINDER_PHRASES
+
+# Переопределения по категориям: {category_id: {ключ: значение}}.
+_overrides_raw = _reminders_cfg.get("categories")
+_overrides_raw = _overrides_raw if isinstance(_overrides_raw, dict) else {}
+REMINDER_CATEGORY_OVERRIDES: dict[int, dict] = {}
+for _raw_key, _override in _overrides_raw.items():
+    if not isinstance(_override, dict):
+        continue
+    try:
+        _category_id = int(str(_raw_key).strip())
+    except (TypeError, ValueError):
+        continue
+    REMINDER_CATEGORY_OVERRIDES[_category_id] = _override
+
+
+def reminder_config_for(category_id) -> dict:
+    """Итоговые настройки напоминаний для категории канала.
+
+    Значения из [reminders.categories.<id>] перекрывают глобальные. Роли
+    персонала по умолчанию берутся из ignored_role_ids: это ровно те роли,
+    чьи сообщения бот и так считает «не игроком».
+    """
+    override = REMINDER_CATEGORY_OVERRIDES.get(category_id, {})
+
+    def pick(key: str, fallback):
+        return override.get(key, fallback) if isinstance(override, dict) else fallback
+
+    staff_roles = _parse_id_list(pick("staff_role_ids", REMINDER_STAFF_ROLE_IDS))
+    if not staff_roles:
+        staff_roles = list(IGNORED_ROLE_IDS)
+
+    return {
+        "enabled": bool(pick("enabled", REMINDERS_ENABLED)),
+        "staff_role_ids": staff_roles,
+        "ping_role_ids": _parse_id_list(pick("ping_role_ids", REMINDER_PING_ROLE_IDS)),
+        "idle_hours": float(pick("idle_hours", REMINDER_IDLE_HOURS)),
+        "repeat_hours": float(pick("repeat_hours", REMINDER_REPEAT_HOURS)),
+        "max_per_day": int(pick("max_per_day", REMINDER_MAX_PER_DAY)),
+        "message_mode": str(pick("message_mode", REMINDER_MESSAGE_MODE)).lower(),
+        "phrases": pick("phrases", REMINDER_PHRASES) or _DEFAULT_REMINDER_PHRASES,
+    }
+
+
 # ── Server facts ─────────────────────────────────────────────────────────────
 _server_cfg = _section("server")
 SERVER_MIN_VERSION: str = _server_cfg.get("min_version", "1.19.4")
@@ -257,3 +345,141 @@ STATE_SNAPSHOT_FILE: str = _as_path(
 )
 STATE_SAVE_INTERVAL_SECONDS: int = int(_state_cfg.get("save_interval_seconds", 30))
 STATE_TTL_SECONDS: int = int(_state_cfg.get("ttl_seconds", 7 * 24 * 60 * 60))
+
+
+# ── Горячая перезагрузка ─────────────────────────────────────────────────────
+# Перечитывать можно не всё. Токен и прокси участвуют в уже установленном
+# соединении, пути прочитаны при старте, а смена модели эмбеддингов или имени
+# коллекции на живом боте означает несовместимые векторы и тихий мусор в
+# поиске — такие правки требуют рестарта.
+#
+# Формат: (имя переменной, секция, ключ, преобразователь, значение по умолчанию)
+_HOT_RELOADABLE: tuple[tuple, ...] = (
+    ("AI_TEMPERATURE", "ai", "temperature", float, 0.3),
+    ("AI_MAX_TOKENS", "ai", "max_tokens", int, 1024),
+    ("AI_REQUEST_TIMEOUT_SECONDS", "ai", "request_timeout_seconds", int, 90),
+    ("SEARCH_TOP_K", "ai", "search_top_k", int, 2),
+    ("IMAGE_MAX_BYTES", "ai", "image_max_bytes", int, 8 * 1024 * 1024),
+    ("IMAGE_DOWNLOAD_TIMEOUT_SECONDS", "ai", "image_download_timeout_seconds", int, 30),
+
+    ("TICKET_CATEGORY_IDS", "discord", "ticket_category_ids", _parse_id_list, []),
+    ("BOT_ROLE_IDS", "discord", "bot_role_ids", _parse_id_list, []),
+    ("IGNORED_ROLE_IDS", "discord", "ignored_role_ids", _parse_id_list, []),
+    ("BOT_REPLY_FOOTER", "discord", "reply_footer", str, BOT_REPLY_FOOTER),
+
+    ("RATE_LIMIT_ENABLED", "rate_limit", "enabled", bool, True),
+    ("RATE_LIMIT", "rate_limit", "global_limit", int, 30),
+    ("RATE_WINDOW", "rate_limit", "global_window", int, 60),
+    ("CHANNEL_COOLDOWN", "rate_limit", "channel_cooldown", int, 5),
+    ("DUPLICATE_CHECK_TIME", "rate_limit", "duplicate_check_time", int, 5),
+    ("USER_MESSAGE_LIMIT", "rate_limit", "user_message_limit", int, 3),
+    ("USER_MESSAGE_WINDOW", "rate_limit", "user_message_window", int, 10),
+    ("MAX_HISTORY", "rate_limit", "max_history", int, 6),
+    ("MESSAGE_DEBOUNCE_SECONDS", "rate_limit", "message_debounce_seconds", float, 2.5),
+    ("PING_SPAM_LIMIT", "rate_limit", "ping_spam_limit", int, 3),
+    ("PING_SPAM_WINDOW", "rate_limit", "ping_spam_window", int, 300),
+
+    ("REMINDERS_ENABLED", "reminders", "enabled", bool, True),
+    ("REMINDER_STAFF_ROLE_IDS", "reminders", "staff_role_ids", _parse_id_list, []),
+    ("REMINDER_PING_ROLE_IDS", "reminders", "ping_role_ids", _parse_id_list, []),
+    ("REMINDER_IDLE_HOURS", "reminders", "idle_hours", float, 1.0),
+    ("REMINDER_REPEAT_HOURS", "reminders", "repeat_hours", float, 6.0),
+    ("REMINDER_MAX_PER_DAY", "reminders", "max_per_day", int, 3),
+    ("REMINDER_HISTORY_LIMIT", "reminders", "history_limit", int, 25),
+    (
+        "REMINDER_EXCLUDED_CATEGORY_IDS",
+        "reminders",
+        "excluded_category_ids",
+        _parse_id_list,
+        [],
+    ),
+
+    ("INCIDENTS_ENABLED", "incidents", "enabled", bool, True),
+
+    ("STATE_TTL_SECONDS", "state", "ttl_seconds", int, 7 * 24 * 60 * 60),
+)
+
+# Требуют рестарта. Список нужен, чтобы /config reload честно сказал, что
+# именно не применится, вместо тихого игнорирования правки.
+RESTART_REQUIRED_KEYS: tuple[str, ...] = (
+    "[discord].token",
+    "[proxy].*",
+    "[paths].*",
+    "[ai].embedding_model",
+    "[ai].embedding_model_type",
+    "[ai].max_concurrent_requests",
+    "[knowledge].collection_name",
+    "[reminders].check_interval_minutes",
+    "[developer_logs].*",
+)
+
+
+def reload() -> dict[str, tuple]:
+    """Перечитывает settings.toml и обновляет безопасные значения.
+
+    Возвращает {имя: (было, стало)} только по изменившимся ключам. Ошибка
+    чтения файла поднимается наружу, текущие значения при этом сохраняются:
+    битый конфиг не должен обрушить работающего бота.
+    """
+    global _cfg
+
+    fresh = _read_toml(SETTINGS_PATH, required=False)
+
+    if not fresh:
+        raise ValueError(
+            f"{SETTINGS_PATH.name} не прочитан или пуст — прежние настройки сохранены"
+        )
+
+    override = _read_toml(OVERRIDE_PATH, required=False)
+    merged = _deep_merge(fresh, override) if override else fresh
+
+    module = globals()
+    changes: dict[str, tuple] = {}
+
+    def section_of(name: str) -> dict:
+        value = merged.get(name)
+        return value if isinstance(value, dict) else {}
+
+    for variable, section_name, key, converter, default in _HOT_RELOADABLE:
+        raw = section_of(section_name).get(key, default)
+        try:
+            value = converter(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            # Мусор в одном ключе не должен отменять перезагрузку остальных.
+            continue
+
+        previous = module.get(variable)
+        if previous != value:
+            changes[variable] = (previous, value)
+            module[variable] = value
+
+    # Переопределения по категориям: структура вложенная, парсится отдельно.
+    raw_overrides = section_of("reminders").get("categories")
+    raw_overrides = raw_overrides if isinstance(raw_overrides, dict) else {}
+    fresh_overrides: dict[int, dict] = {}
+    for raw_key, override_value in raw_overrides.items():
+        if not isinstance(override_value, dict):
+            continue
+        try:
+            fresh_overrides[int(str(raw_key).strip())] = override_value
+        except (TypeError, ValueError):
+            continue
+
+    if fresh_overrides != REMINDER_CATEGORY_OVERRIDES:
+        changes["REMINDER_CATEGORY_OVERRIDES"] = (
+            sorted(REMINDER_CATEGORY_OVERRIDES),
+            sorted(fresh_overrides),
+        )
+        module["REMINDER_CATEGORY_OVERRIDES"] = fresh_overrides
+
+    # Модель меняется через ModelRegistry: она хранит своё значение, поэтому
+    # здесь только обновляем эталон из файла.
+    fresh_model = section_of("ai").get("openrouter")
+    fresh_model = fresh_model if isinstance(fresh_model, dict) else {}
+    new_model = fresh_model.get("model", OPENROUTER_MODEL)
+    if new_model and new_model != OPENROUTER_MODEL:
+        changes["OPENROUTER_MODEL"] = (OPENROUTER_MODEL, new_model)
+        module["OPENROUTER_MODEL"] = new_model
+
+    _cfg = merged
+    return changes

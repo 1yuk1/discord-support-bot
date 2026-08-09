@@ -1,8 +1,12 @@
 """Генерация settings.toml из переменных окружения.
 
-Запускается entrypoint.sh при каждом старте контейнера, поэтому изменения
-переменных в панели Pterodactyl применяются после обычного рестарта.
-Раньше файл создавался только при отсутствии, и правки не применялись никогда.
+Файл создаётся ОДИН раз — при первом старте, когда его ещё нет. Дальше он
+принадлежит пользователю: правки прямо в settings.toml сохраняются между
+рестартами, и панель их не перетирает.
+
+Заставить перегенерировать можно двумя способами:
+  - SETTINGS_FORCE_REGENERATE=true в переменных окружения;
+  - удалить settings.toml (создастся заново из переменных).
 
 Экранирование значений делается по правилам TOML: токен с кавычкой, бэкслешем
 или значение USE_PROXY=True больше не ломают файл.
@@ -17,7 +21,7 @@ TARGET = Path(os.environ.get("SETTINGS_PATH", "settings.toml"))
 OVERRIDE = Path(os.environ.get("SETTINGS_OVERRIDE_PATH", "settings.local.toml"))
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on", "да"}
-_FALSE_VALUES = {"0", "false", "no", "n", "off", "нет", ""}
+_FALSE_VALUES = {"0", "false", "no", "n", "off", "нет"}
 
 
 def env(name: str, default: str = "") -> str:
@@ -39,7 +43,15 @@ def quote(value: str) -> str:
 
 
 def boolean(name: str, default: bool = False) -> str:
+    """Значение флага из переменной окружения.
+
+    Незаданная переменная означает «бери default», а не false: иначе все
+    флаги с default=True (напоминания, инциденты, рейт-лимит, архивация
+    логов) молча выключались бы, если панель их не передала.
+    """
     raw = env(name).lower()
+    if not raw:
+        return str(default).lower()
     if raw in _TRUE_VALUES:
         return "true"
     if raw in _FALSE_VALUES:
@@ -102,6 +114,7 @@ REQUIRED_VARS = (
 # Переменные, которые бот умеет читать. Нужны только для диагностики:
 # показываем, что панель вообще передала в контейнер.
 KNOWN_OPTIONAL_VARS = (
+    "SETTINGS_FORCE_REGENERATE",
     "OPENROUTER_MODEL",
     "TICKET_CATEGORY_IDS",
     "TICKET_CATEGORY_ID",
@@ -155,9 +168,13 @@ def build() -> str:
     token = env("DISCORD_TOKEN")
     api_key = env("OPENROUTER_API_KEY")
 
-    return f"""# Сгенерирован автоматически из переменных окружения при старте контейнера.
-# Правки здесь будут потеряны при следующем рестарте.
-# Для постоянных ручных настроек используйте {OVERRIDE.name}.
+    return f"""# Создан автоматически из переменных окружения при первом старте.
+# Файл больше не перегенерируется: правьте его смело, рестарт правки сохранит.
+#
+# Пересоздать из переменных окружения: удалите этот файл либо задайте
+# SETTINGS_FORCE_REGENERATE=true в панели.
+# Ещё можно держать ручные правки отдельно в {OVERRIDE.name} — его ключи
+# переопределяют значения отсюда.
 
 [discord]
 token = {quote(token)}
@@ -195,6 +212,13 @@ database = "chroma_db"
 logs = "logs"
 knowledge = "knowledge"
 prompts = "prompts"
+data = "data"
+
+[incidents]
+# Известные проблемы, которые бот учитывает в каждом ответе.
+# Управление: /incident add, /incident list, /incident remove.
+enabled = {boolean("INCIDENTS_ENABLED", True)}
+file = "data/incidents.md"
 
 [knowledge]
 collection_name = {quote(env("CHROMA_COLLECTION_NAME", "sinussmp_support"))}
@@ -229,6 +253,31 @@ user_message_window = {integer("RATE_LIMIT_USER_MESSAGE_WINDOW", 10)}
 max_history = {integer("RATE_LIMIT_MAX_HISTORY", 6)}
 message_debounce_seconds = {number("MESSAGE_DEBOUNCE_SECONDS", 2.5)}
 
+[reminders]
+# Напоминание персоналу, если игрок давно ждёт ответа.
+# ping_role_ids обязателен: пока он пуст, напоминания не отправляются.
+enabled = {boolean("REMINDERS_ENABLED", True)}
+staff_role_ids = {id_list("REMINDER_STAFF_ROLE_IDS")}
+ping_role_ids = {id_list("REMINDER_PING_ROLE_IDS")}
+idle_hours = {number("REMINDER_IDLE_HOURS", 1.0)}
+repeat_hours = {number("REMINDER_REPEAT_HOURS", 6.0)}
+max_per_day = {integer("REMINDER_MAX_PER_DAY", 3)}
+check_interval_minutes = {integer("REMINDER_CHECK_INTERVAL_MINUTES", 10)}
+excluded_category_ids = {id_list("REMINDER_EXCLUDED_CATEGORY_IDS")}
+# llm — текст пишет модель под конкретный тикет; static — фраза из phrases.
+message_mode = {quote(env("REMINDER_MESSAGE_MODE", "llm"))}
+
+# Роли и тайминги можно переопределить для отдельной категории. Пример:
+# на тестовом сервере роли поддержки нет, поэтому там напоминания выключены.
+#
+# [reminders.categories.123456789012345678]
+# ping_role_ids = [1119360384395132973]
+# staff_role_ids = [1119360384395132973]
+# idle_hours = 2
+#
+# [reminders.categories.987654321098765432]
+# enabled = false
+
 [server]
 min_version = {quote(env("SERVER_MIN_VERSION", "1.19.4"))}
 max_version = {quote(env("SERVER_MAX_VERSION", "1.21.10"))}
@@ -253,7 +302,7 @@ def check_override() -> None:
     if not OVERRIDE.exists():
         return
     try:
-        tomllib.loads(OVERRIDE.read_text(encoding="utf-8"))
+        tomllib.loads(OVERRIDE.read_text(encoding="utf-8-sig"))
     except tomllib.TOMLDecodeError as exc:
         print(f"[settings] {OVERRIDE.name} содержит ошибку и будет пропущен: {exc}", file=sys.stderr)
         return
@@ -263,7 +312,48 @@ def check_override() -> None:
     print(f"[settings] Найден {OVERRIDE.name}, его ключи переопределят сгенерированные")
 
 
+def force_regenerate() -> bool:
+    return env("SETTINGS_FORCE_REGENERATE").lower() in _TRUE_VALUES
+
+
+def validate_existing() -> None:
+    """Проверяет, что готовый settings.toml читается.
+
+    Обязательные переменные окружения здесь НЕ проверяются: значения уже
+    лежат в файле, а пустой DISCORD_TOKEN в панели не повод отказываться от
+    запуска. Отсутствие токена внутри файла поймает bot.settings.
+    """
+    try:
+        # utf-8-sig: редакторы на Windows дописывают BOM, и tomllib на нём
+        # падает с невнятным «Invalid statement at line 1».
+        tomllib.loads(TARGET.read_text(encoding="utf-8-sig"))
+    except tomllib.TOMLDecodeError as exc:
+        print(f"{TARGET.name} содержит синтаксическую ошибку: {exc}", file=sys.stderr)
+        print(
+            "   Исправьте файл, либо удалите его — тогда он создастся заново\n"
+            "   из переменных окружения панели.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    except OSError as exc:
+        print(f"Не удалось прочитать {TARGET.name}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def main() -> None:
+    if TARGET.exists() and not force_regenerate():
+        validate_existing()
+        check_override()
+        print(
+            f"{TARGET.name} уже существует — генерация пропущена, ручные правки сохранены.\n"
+            f"   Пересоздать из переменных: удалите файл или задайте "
+            f"SETTINGS_FORCE_REGENERATE=true"
+        )
+        return
+
+    if TARGET.exists():
+        print(f"SETTINGS_FORCE_REGENERATE=true — {TARGET.name} будет перезаписан")
+
     check_required()
     content = build()
 
@@ -282,7 +372,7 @@ def main() -> None:
         TARGET.chmod(0o600)
     except OSError:
         pass
-    print(f"settings.toml сгенерирован из переменных окружения ({TARGET})")
+    print(f"settings.toml создан из переменных окружения ({TARGET})")
 
 
 if __name__ == "__main__":

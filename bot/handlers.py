@@ -29,7 +29,7 @@ from bot.llm import ERROR_PREFIX, ERROR_TIMEOUT
 from bot.logging_setup import logger
 from bot.state import store
 from bot.text_utils import normalize_for_dedup
-from bot import ticket_logs
+from bot import reminders, ticket_logs
 
 COOLDOWN_NOTICE = "⏳ Подождите {seconds} секунд перед следующим вопросом."
 GLOBAL_LIMIT_NOTICE = "⏳ Слишком много сообщений. Подождите минуту."
@@ -43,6 +43,18 @@ class MessageRouter:
         self._bot = bot
         self._agent = agent
         self._semaphore = asyncio.Semaphore(max(settings.AI_MAX_CONCURRENT_REQUESTS, 1))
+        self._ticket_categories = set(settings.TICKET_CATEGORY_IDS)
+        self._bot_role_ids = set(settings.BOT_ROLE_IDS)
+        self._ignored_role_ids = set(settings.IGNORED_ROLE_IDS)
+        self.reminder_service = reminders.ReminderService(bot, agent)
+
+    def refresh_settings(self) -> None:
+        """Перечитывает id категорий и ролей после /config reload.
+
+        Роутер копирует их в множества при создании: без этого вызова правка
+        ticket_category_ids в файле применилась бы только после рестарта.
+        Семафор не пересоздаём — активные запросы к AI держат его слоты.
+        """
         self._ticket_categories = set(settings.TICKET_CATEGORY_IDS)
         self._bot_role_ids = set(settings.BOT_ROLE_IDS)
         self._ignored_role_ids = set(settings.IGNORED_ROLE_IDS)
@@ -277,6 +289,25 @@ class MessageRouter:
             reason,
         )
 
+    # ── Напоминания ──────────────────────────────────────────────────────────
+    def _record_reminder_activity(self, message, channel_id) -> None:
+        """Отмечает в состоянии, кто писал последним: персонал или игрок."""
+        if not settings.REMINDERS_ENABLED:
+            return
+
+        category_id = getattr(message.channel, "category_id", None)
+        config = settings.reminder_config_for(category_id)
+        if not config.get("enabled"):
+            return
+
+        state = store.get_or_create(channel_id)
+        reminders.record_activity(
+            state,
+            is_staff_author=reminders.is_staff(message.author, config.get("staff_role_ids")),
+            is_bot_author=bool(message.author.bot),
+        )
+        store.mark_dirty()
+
     # ── Точка входа ──────────────────────────────────────────────────────────
     async def handle_message(self, message) -> None:
         channel = message.channel
@@ -301,6 +332,10 @@ class MessageRouter:
 
         if message.author.bot and not should_use_message_as_question(message):
             return
+
+        # Активность отмечаем ДО игнора по роли: ответ хелпера обязан сбросить
+        # отсчёт напоминаний, хотя сам бот на такие сообщения не реагирует.
+        self._record_reminder_activity(message, channel_id)
 
         if not message.author.bot and self.has_ignored_role(message.author):
             logger.info(

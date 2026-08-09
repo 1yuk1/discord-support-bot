@@ -169,6 +169,86 @@
             "field_type": "text"
         },
         {
+            "name": "Reminders Enabled",
+            "description": "Напоминать персоналу о тикетах без ответа (true/false). Работает только если задан Reminder Ping Role IDs.",
+            "env_variable": "REMINDERS_ENABLED",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Ping Role IDs",
+            "description": "ID ролей, которые пингуются в тикете без ответа. Через запятую. Пусто = напоминания не отправляются. Для отдельных категорий роли задаются в settings.toml в секции [reminders.categories.<id>].",
+            "env_variable": "REMINDER_PING_ROLE_IDS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Staff Role IDs",
+            "description": "ID ролей персонала: их ответ сбрасывает отсчёт напоминания. Пусто = берутся Ignored Role IDs.",
+            "env_variable": "REMINDER_STAFF_ROLE_IDS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Idle Hours",
+            "description": "Сколько часов без ответа персонала до первого напоминания",
+            "env_variable": "REMINDER_IDLE_HOURS",
+            "default_value": "1",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Repeat Hours",
+            "description": "Минимальный интервал между напоминаниями в одном тикете, часы",
+            "env_variable": "REMINDER_REPEAT_HOURS",
+            "default_value": "6",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|numeric",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Max Per Day",
+            "description": "Лимит напоминаний в одном тикете за сутки",
+            "env_variable": "REMINDER_MAX_PER_DAY",
+            "default_value": "3",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|integer",
+            "field_type": "text"
+        },
+        {
+            "name": "Reminder Message Mode",
+            "description": "llm — текст напоминания пишет модель под конкретный тикет; static — случайная заготовленная фраза.",
+            "env_variable": "REMINDER_MESSAGE_MODE",
+            "default_value": "llm",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:llm,static",
+            "field_type": "text"
+        },
+        {
+            "name": "Incidents Enabled",
+            "description": "Учитывать активные инциденты в ответах (true/false). Управление: /incident add, /incident list, /incident remove.",
+            "env_variable": "INCIDENTS_ENABLED",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
             "name": "Server Recommended Version",
             "description": "Рекомендуемая версия Minecraft, подставляется в ответы бота",
             "env_variable": "SERVER_RECOMMENDED_VERSION",
@@ -193,6 +273,16 @@
             "description": "Обновлять код из GitHub при запуске (true/false)",
             "env_variable": "BOT_AUTO_UPDATE",
             "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Force Regenerate Settings",
+            "description": "Перезаписать settings.toml из переменных окружения при старте. Обычно false: файл создаётся один раз, дальше правки в нём сохраняются между рестартами.",
+            "env_variable": "SETTINGS_FORCE_REGENERATE",
+            "default_value": "false",
             "user_viewable": true,
             "user_editable": true,
             "rules": "nullable|string|in:true,false",

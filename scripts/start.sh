@@ -11,17 +11,19 @@ export HF_HOME=/home/container/model_cache
 # TRANSFORMERS_CACHE устарел в пользу HF_HOME и вызывает предупреждение.
 unset TRANSFORMERS_CACHE 2>/dev/null || true
 
-mkdir -p chroma_db logs logs/active logs/archives model_cache
+# data/ хранит то, что бот пишет сам (инциденты). Автообновление этот каталог
+# не трогает, в отличие от bot/, prompts/ и knowledge/.
+mkdir -p chroma_db logs logs/active logs/archives model_cache data
 
 # ── Настройки ────────────────────────────────────────────────────────────────
-# Генерируем каждый старт, чтобы правки переменных в панели Pterodactyl
-# применялись после обычного рестарта. Раньше файл создавался только при
-# отсутствии, и изменения не применялись никогда.
-echo "Генерация settings.toml из переменных окружения..."
+# Файл создаётся только при первом старте. Дальше он принадлежит пользователю:
+# правки в settings.toml переживают рестарт. Пересоздать — удалить файл или
+# задать SETTINGS_FORCE_REGENERATE=true.
+echo "Проверка settings.toml..."
 if ! python scripts/generate_settings.py; then
     echo "" >&2
-    echo "Бот не запущен: не удалось создать settings.toml." >&2
-    echo "Причина указана выше. Исправьте переменные в панели и перезапустите." >&2
+    echo "Бот не запущен: проблема с settings.toml." >&2
+    echo "Причина указана выше. Исправьте и перезапустите." >&2
     exit 1
 fi
 

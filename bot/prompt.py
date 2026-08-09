@@ -12,6 +12,7 @@ from bot.text_utils import apply_templates, find_unknown_placeholders
 
 SYSTEM_PROMPT_FILE = "system.md"
 SUMMARY_PROMPT_FILE = "summary.md"
+REMINDER_PROMPT_FILE = "reminder.md"
 
 # Заполняется вызывающей стороной, не относится к настройкам сервера.
 _RUNTIME_PLACEHOLDERS = {"TRANSCRIPT"}
@@ -71,6 +72,10 @@ class PromptLibrary:
     @property
     def summary(self) -> str:
         return self.get(SUMMARY_PROMPT_FILE)
+
+    @property
+    def reminder(self) -> str:
+        return self.get(REMINDER_PROMPT_FILE)
 
     def reload(self) -> None:
         """Перечитывает файлы. При ошибке кэш остаётся прежним."""

@@ -4,7 +4,7 @@ import base64
 
 import httpx
 
-from bot import settings
+from bot import incidents, settings
 from bot.escalation import TRANSFER_ANSWER
 from bot.filters import IMAGE_ONLY_PLACEHOLDER, is_short_clarification
 from bot.logging_setup import log_exception, logger
@@ -183,6 +183,13 @@ class SupportAgent:
 
         messages: list[dict] = [{"role": "system", "content": prompts.system}]
 
+        # Инциденты идут отдельным system-сообщением после основного промпта:
+        # так они не тонут в истории диалога и действуют на любой вопрос.
+        # Когда инцидентов нет, блок не добавляется — токены не тратятся.
+        incidents_block = incidents.prompt_block()
+        if incidents_block:
+            messages.append({"role": "system", "content": incidents_block})
+
         for entry in conversation_history or []:
             if not isinstance(entry, dict):
                 continue
@@ -207,10 +214,12 @@ class SupportAgent:
 
         model = models.get()
         logger.info(
-            "Запрос к AI | model=%s | messages=%s | has_context=%s | images=%s | preview=%s",
+            "Запрос к AI | model=%s | messages=%s | has_context=%s | инцидентов=%s | "
+            "images=%s | preview=%s",
             model,
             len(messages),
             bool(context),
+            len(incidents.active()),
             len(image_blocks),
             user_input[:200].replace("\n", " "),
         )
@@ -237,6 +246,30 @@ class SupportAgent:
                 user_input_preview=user_input[:200],
             )
             return _classify_error(exc)
+
+    def compose_reminder(self, transcript: str) -> str:
+        """Текст напоминания игроку, который давно ждёт ответа.
+
+        Вызывающая сторона обязана иметь запасную статичную фразу: любая
+        ошибка здесь не должна отменять само напоминание.
+        """
+        prompt = prompts.reminder.replace("{TRANSCRIPT}", transcript)
+        response = self._client.chat.completions.create(
+            model=models.get(),
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты пишешь короткие вежливые напоминания игрокам поддержки. "
+                        "Никогда не называешь сроки и не выдумываешь факты."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.5,
+            max_tokens=200,
+        )
+        return response.choices[0].message.content or ""
 
     def summarize_ticket(self, transcript: str) -> str:
         """Сводка тикета для администратора."""

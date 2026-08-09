@@ -37,6 +37,14 @@ def create_channel_state() -> dict:
         "last_message": "",
         "last_message_time": 0.0,
         "last_answer_time": 0.0,
+        # Кто писал последним — основа для напоминаний персоналу.
+        "last_staff_message_time": 0.0,
+        "last_player_message_time": 0.0,
+        # Напоминания: ручное отключение в канале, метка и счётчик за сутки.
+        "reminders_disabled": False,
+        "last_reminder_time": 0.0,
+        "reminder_count_today": 0,
+        "reminder_day": "",
         "user_messages": deque(),
         "processed_message_ids": set(),
         "last_processed_message_id": None,
@@ -89,6 +97,12 @@ class ConversationStore:
         state["bot_disabled"] = bool(previous.get("bot_disabled"))
         state["disabled_by"] = previous.get("disabled_by")
         state["disabled_at"] = previous.get("disabled_at")
+        # Настройки напоминаний — не часть истории диалога: /clear_history не
+        # должен ни включать их обратно, ни сбрасывать суточный счётчик.
+        state["reminders_disabled"] = bool(previous.get("reminders_disabled"))
+        state["last_reminder_time"] = previous.get("last_reminder_time", 0.0)
+        state["reminder_count_today"] = previous.get("reminder_count_today", 0)
+        state["reminder_day"] = previous.get("reminder_day", "")
         self._channels[channel_id] = state
         self.mark_dirty()
         return state
@@ -135,6 +149,11 @@ class ConversationStore:
                 data.get("human_mode"),
                 data.get("bot_disabled"),
                 data.get("ticket_opening_handled"),
+                data.get("reminders_disabled"),
+                # Точку отсчёта для напоминаний нельзя терять при рестарте:
+                # иначе ожидание начнётся заново и персонал не получит пинг.
+                data.get("last_player_message_time"),
+                data.get("last_staff_message_time"),
             )):
                 continue
             snapshot[str(channel_id)] = {
@@ -145,6 +164,12 @@ class ConversationStore:
                 "ticket_opening_handled": bool(data.get("ticket_opening_handled")),
                 "last_activity": data.get("last_activity", time.time()),
                 "last_processed_message_id": data.get("last_processed_message_id"),
+                "last_staff_message_time": data.get("last_staff_message_time", 0.0),
+                "last_player_message_time": data.get("last_player_message_time", 0.0),
+                "reminders_disabled": bool(data.get("reminders_disabled")),
+                "last_reminder_time": data.get("last_reminder_time", 0.0),
+                "reminder_count_today": int(data.get("reminder_count_today", 0) or 0),
+                "reminder_day": data.get("reminder_day", ""),
             }
         return snapshot
 
@@ -206,6 +231,22 @@ class ConversationStore:
             state["disabled_at"] = data.get("disabled_at")
             state["ticket_opening_handled"] = bool(data.get("ticket_opening_handled"))
             state["last_activity"] = last_activity
+            state["reminders_disabled"] = bool(data.get("reminders_disabled"))
+            state["reminder_day"] = str(data.get("reminder_day", "") or "")
+
+            for key in (
+                "last_staff_message_time",
+                "last_player_message_time",
+                "last_reminder_time",
+            ):
+                try:
+                    state[key] = float(data.get(key, 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    state[key] = 0.0
+            try:
+                state["reminder_count_today"] = int(data.get("reminder_count_today", 0) or 0)
+            except (TypeError, ValueError):
+                state["reminder_count_today"] = 0
 
             last_message_id = data.get("last_processed_message_id")
             if last_message_id is not None:
