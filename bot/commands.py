@@ -419,6 +419,67 @@ def _do_config_reload(router) -> str:
     return "\n".join(lines)
 
 
+# ── Русские имена slash-команд ───────────────────────────────────────────────
+# Discord разрешает Unicode в именах команд, но у одной команды может быть
+# только одно имя на локаль. Поэтому русские варианты отдаются через
+# локализацию: клиент с русским языком видит /стоп, остальные — /stop.
+# Ключ — оригинальное английское имя команды, группы или параметра.
+_RU_COMMAND_NAMES: dict[str, str] = {
+    # Команды и группы
+    "stop": "стоп",
+    "start": "старт",
+    "status": "статус",
+    "clear_history": "очистить-историю",
+    "resume_bot": "вернуть-бота",
+    "summarize": "сводка",
+    "model": "модель",
+    "show": "показать",
+    "set": "сменить",
+    "save": "сохранить",
+    "reminders": "напоминания",
+    "on": "включить",
+    "off": "выключить",
+    "incident": "инцидент",
+    "add": "добавить",
+    "list": "список",
+    "remove": "удалить",
+    "config": "настройки",
+    "reload": "перезагрузить",
+    "ping": "пинг",
+    "help": "помощь",
+    # Параметры
+    "limit": "лимит",
+    "title": "заголовок",
+    "text": "текст",
+}
+
+_TRANSLATED_LOCATIONS = frozenset({
+    app_commands.TranslationContextLocation.command_name,
+    app_commands.TranslationContextLocation.group_name,
+    app_commands.TranslationContextLocation.parameter_name,
+})
+
+
+class RussianCommandTranslator(app_commands.Translator):
+    """Русские имена команд для клиентов с русской локалью.
+
+    Описания не переводим: они и так написаны по-русски в объявлениях команд.
+    Для остальных локалей возвращаем None — там остаются английские имена.
+    """
+
+    async def translate(
+        self,
+        string: app_commands.locale_str,
+        locale: discord.Locale,
+        context: app_commands.TranslationContext,
+    ) -> str | None:
+        if locale is not discord.Locale.russian:
+            return None
+        if context.location not in _TRANSLATED_LOCATIONS:
+            return None
+        return _RU_COMMAND_NAMES.get(str(string).lower())
+
+
 _HELP_TEXT = """**Команды администратора**
 
 Управление в канале:
@@ -634,32 +695,32 @@ def _register_prefix_commands(bot, agent, router=None) -> None:
     только для interaction.
     """
 
-    @bot.command(name="stop", aliases=["mute", "silence"])
+    @bot.command(name="stop", aliases=["mute", "silence", "стоп", "выкл"])
     @commands.has_permissions(administrator=True)
     async def stop_in_channel(ctx):
         await safe_send(ctx.channel, _do_stop(ctx.channel, ctx.author))
 
-    @bot.command(name="start", aliases=["unmute"])
+    @bot.command(name="start", aliases=["unmute", "старт", "вкл"])
     @commands.has_permissions(administrator=True)
     async def start_in_channel(ctx):
         await safe_send(ctx.channel, _do_start(ctx.channel, ctx.author))
 
-    @bot.command(name="clear_history")
+    @bot.command(name="clear_history", aliases=["очистить_историю", "сброс"])
     @commands.has_permissions(administrator=True)
     async def clear_history(ctx):
         await safe_send(ctx.channel, _do_clear_history(ctx.channel))
 
-    @bot.command(name="resume_bot")
+    @bot.command(name="resume_bot", aliases=["вернуть_бота", "вернуть"])
     @commands.has_permissions(administrator=True)
     async def resume_bot(ctx):
         await safe_send(ctx.channel, _do_resume_bot(ctx.channel))
 
-    @bot.command(name="bot_status")
+    @bot.command(name="bot_status", aliases=["статус"])
     @commands.has_permissions(administrator=True)
     async def bot_status(ctx):
         await safe_send(ctx.channel, _do_status(ctx.channel))
 
-    @bot.command(name="summarize")
+    @bot.command(name="summarize", aliases=["сводка"])
     @commands.has_permissions(administrator=True)
     async def summarize_ticket(ctx, limit: int = 80):
         limit = max(_SUMMARY_MIN_MESSAGES, min(limit, _SUMMARY_MAX_MESSAGES))
@@ -682,76 +743,85 @@ def _register_prefix_commands(bot, agent, router=None) -> None:
 
         await safe_send(ctx.channel, f"Сводка тикета:\n{summary}")
 
-    @bot.group(name="model", invoke_without_command=True)
+    @bot.group(name="model", aliases=["модель"], invoke_without_command=True)
     @commands.has_permissions(administrator=True)
     async def model_group(ctx):
         await safe_send(ctx.channel, _do_model_show())
 
-    @model_group.command(name="set")
+    @model_group.command(name="set", aliases=["сменить"])
     @commands.has_permissions(administrator=True)
     async def model_set(ctx, *, model_name: str):
         await safe_send(ctx.channel, _do_model_set(model_name, ctx.author))
 
-    @model_group.command(name="save")
+    @model_group.command(name="save", aliases=["сохранить"])
     @commands.has_permissions(administrator=True)
     async def model_save(ctx, *, model_name: str):
         await safe_send(ctx.channel, _do_model_save(model_name, ctx.author))
 
-    @bot.group(name="reminders", invoke_without_command=True)
+    @bot.group(name="reminders", aliases=["напоминания"], invoke_without_command=True)
     @commands.has_permissions(administrator=True)
     async def reminders_group(ctx):
         await safe_send(ctx.channel, _do_reminders_status(ctx.channel))
 
-    @reminders_group.command(name="status")
+    @reminders_group.command(name="status", aliases=["статус"])
     @commands.has_permissions(administrator=True)
     async def reminders_status(ctx):
         await safe_send(ctx.channel, _do_reminders_status(ctx.channel))
 
-    @reminders_group.command(name="off")
+    @reminders_group.command(name="off", aliases=["выкл"])
     @commands.has_permissions(administrator=True)
     async def reminders_off(ctx):
         await safe_send(ctx.channel, _do_reminders_toggle(ctx.channel, False))
 
-    @reminders_group.command(name="on")
+    @reminders_group.command(name="on", aliases=["вкл"])
     @commands.has_permissions(administrator=True)
     async def reminders_on(ctx):
         await safe_send(ctx.channel, _do_reminders_toggle(ctx.channel, True))
 
-    @bot.group(name="incident", invoke_without_command=True)
+    @bot.group(name="incident", aliases=["инцидент"], invoke_without_command=True)
     @commands.has_permissions(administrator=True)
     async def incident_group(ctx):
         await safe_send(ctx.channel, _do_incident_list())
 
-    @incident_group.command(name="list")
+    @incident_group.command(name="list", aliases=["список"])
     @commands.has_permissions(administrator=True)
     async def incident_list(ctx):
         await safe_send(ctx.channel, _do_incident_list())
 
-    @incident_group.command(name="add")
+    @incident_group.command(name="add", aliases=["добавить"])
     @commands.has_permissions(administrator=True)
     async def incident_add(ctx, title: str, *, text: str):
         await safe_send(ctx.channel, _do_incident_add(title, text, ctx.author))
 
-    @incident_group.command(name="remove")
+    @incident_group.command(name="remove", aliases=["удалить"])
     @commands.has_permissions(administrator=True)
     async def incident_remove(ctx, incident_id: str):
         await safe_send(ctx.channel, _do_incident_remove(incident_id))
 
-    @bot.group(name="config", invoke_without_command=True)
+    @bot.group(name="config", aliases=["настройки"], invoke_without_command=True)
     @commands.has_permissions(administrator=True)
     async def config_group(ctx):
         await safe_send(ctx.channel, f"Доступно: {settings.COMMAND_PREFIX}config reload")
 
-    @config_group.command(name="reload")
+    @config_group.command(name="reload", aliases=["перезагрузить"])
     @commands.has_permissions(administrator=True)
     async def config_reload(ctx):
         await safe_send(ctx.channel, _do_config_reload(router))
 
-    @bot.command(name="ping")
+    @bot.command(name="ping", aliases=["пинг"])
     async def ping(ctx):
         await safe_send(ctx.channel, f"Pong! Задержка: {round(bot.latency * 1000)}ms")
 
-    @bot.command(name="help")
+    @bot.command(name="help", aliases=["помощь", "справка"])
     @commands.has_permissions(administrator=True)
     async def help_command(ctx):
         await safe_send(ctx.channel, _HELP_TEXT)
+
+
+async def set_translator(bot) -> None:
+    """Ставит переводчик команд для русской локали.
+    
+    Вызывается из on_ready в async-контексте."""
+    translator = RussianCommandTranslator()
+    await bot.tree.set_translator(translator)
+    logger.info("Переводчик команд зарегистрирован: русские имена для RU-локали")

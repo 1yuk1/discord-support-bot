@@ -149,6 +149,9 @@ def _register_events(bot: commands.Bot, router: MessageRouter) -> None:
     async def on_ready():
         logger.info("Бот запущен: %s", bot.user)
         store.load()
+        
+        from bot.commands import set_translator
+        await set_translator(bot)
         await _sync_command_tree(bot)
 
         for loop in (persist_state_loop, cleanup_state_loop):

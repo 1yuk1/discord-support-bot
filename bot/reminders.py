@@ -138,6 +138,34 @@ def format_reminder(text: str, ping_role_ids) -> str:
     return f"{body}\n{mentions}".strip() if mentions else body
 
 
+def _is_valid_reminder_text(text: str) -> bool:
+    """Проверяет, что текст выглядит как нормальное напоминание.
+    
+    Отсекает мусор: обрезанные ответы, утёкший промпт, фрагменты инструкций.
+    """
+    if not text or len(text.strip()) < 20:
+        return False
+    
+    # Фрагменты инструкций из промпта или leaked reasoning.
+    junk_patterns = [
+        "transcript", "{transcript}", "rules:", "example:",
+        "role:", "system:", "user:", "assistant:",
+        "never mention", "no facts", "don't invent",
+        "reasons/statuses", ", no requests for data",
+    ]
+    lower = text.lower()
+    if any(pattern in lower for pattern in junk_patterns):
+        return False
+    
+    # Обрезанные ответы: заканчиваются на незакрытое предложение.
+    # Проверяем, что есть хотя бы одна точка/восклицательный/вопрос в середине.
+    stripped = text.strip()
+    if not any(stripped.count(p) > 0 for p in [".", "!", "?"]):
+        return False
+    
+    return True
+
+
 class ReminderService:
     """Периодически проверяет тикеты и отправляет напоминания."""
 
@@ -174,7 +202,16 @@ class ReminderService:
                 asyncio.to_thread(compose, transcript),
                 timeout=settings.AI_REQUEST_TIMEOUT_SECONDS + 10,
             )
-            return (text or "").strip() or static_phrase(config)
+            candidate = (text or "").strip()
+            if not _is_valid_reminder_text(candidate):
+                logger.warning(
+                    "Текст напоминания от LLM не прошёл проверку, беру заготовку | "
+                    "channel_id=%s | preview=%s",
+                    getattr(channel, "id", "unknown"),
+                    candidate[:120].replace("\n", " "),
+                )
+                return static_phrase(config)
+            return candidate
         except Exception as exc:
             log_exception(
                 "Не удалось сгенерировать текст напоминания, беру заготовку",
@@ -257,9 +294,36 @@ class ReminderService:
         from bot.discord_client import send_reminder
 
         text = await self._build_text(channel, config)
-        content = format_reminder(text, config.get("ping_role_ids") or [])
-
-        message = await send_reminder(channel, content, config.get("ping_role_ids") or [])
+        ping_role_ids = config.get("ping_role_ids") or []
+        
+        # Фильтруем несуществующие роли: "@Неизвестная роль" в Discord = мусор.
+        valid_role_ids = []
+        guild = getattr(channel, "guild", None)
+        if guild is not None and ping_role_ids:
+            for role_id in ping_role_ids:
+                if guild.get_role(role_id) is not None:
+                    valid_role_ids.append(role_id)
+                else:
+                    logger.warning(
+                        "Роль %s не найдена на сервере %s | channel_id=%s",
+                        role_id,
+                        guild.id,
+                        getattr(channel, "id", "unknown"),
+                    )
+        else:
+            valid_role_ids = list(ping_role_ids)
+        
+        if not valid_role_ids and ping_role_ids:
+            logger.warning(
+                "Все роли для пинга недействительны | channel_id=%s | "
+                "было=%s | напоминание не отправлено",
+                getattr(channel, "id", "unknown"),
+                ping_role_ids,
+            )
+            return False
+        
+        content = format_reminder(text, valid_role_ids)
+        message = await send_reminder(channel, content, valid_role_ids)
         if message is None:
             return False
 
@@ -276,6 +340,6 @@ class ReminderService:
             waited_hours,
             state.get("reminder_count_today"),
             config.get("max_per_day"),
-            config.get("ping_role_ids"),
+            valid_role_ids,
         )
         return True

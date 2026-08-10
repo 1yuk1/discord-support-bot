@@ -5,11 +5,13 @@
 Тесты handlers/commands работают на заглушках и такого не увидят.
 """
 
+import asyncio
+
 import discord
 import pytest
 from discord.ext import commands as dcommands
 
-from bot.commands import register_commands
+from bot.commands import RussianCommandTranslator, register_commands, set_translator
 
 ADMIN = discord.Permissions(administrator=True).value
 
@@ -96,3 +98,74 @@ def test_descriptions_present(bot):
     for command in bot.tree.walk_commands():
         description = getattr(command, "description", "")
         assert description and description.strip(), f"{command.qualified_name}: нет описания"
+
+
+# ── Русские имена команд ─────────────────────────────────────────────────────
+def _ru_payload(bot):
+    """Payload дерева команд с русскими локализациями."""
+
+    async def build():
+        translator = RussianCommandTranslator()
+        await bot.tree.set_translator(translator)
+        return [
+            await command.get_translated_payload(bot.tree, translator)
+            for command in bot.tree.get_commands()
+        ]
+
+    return asyncio.run(build())
+
+
+def test_top_level_commands_have_russian_names(bot):
+    """У каждой команды верхнего уровня есть имя для ru-локали.
+
+    Без локализации русскоязычный админ ищет /стоп и не находит ничего.
+    """
+    for payload in _ru_payload(bot):
+        localizations = payload.get("name_localizations") or {}
+        assert localizations.get("ru"), f"{payload['name']}: нет русского имени"
+
+
+def test_subcommands_and_options_have_russian_names(bot):
+    """Подкоманды групп и параметры тоже переводятся."""
+    for payload in _ru_payload(bot):
+        for option in payload.get("options") or []:
+            localizations = option.get("name_localizations") or {}
+            assert localizations.get("ru"), (
+                f"{payload['name']} {option['name']}: нет русского имени"
+            )
+
+
+def test_russian_names_are_valid_for_discord(bot):
+    """Discord принимает только строчные буквы, цифры, дефис и подчёркивание."""
+    import re
+
+    pattern = re.compile(r"^[-_\w]{1,32}$")
+
+    def check(name: str, where: str) -> None:
+        assert pattern.match(name), f"{where}: недопустимое имя {name!r}"
+        assert name == name.lower(), f"{where}: имя не в нижнем регистре {name!r}"
+
+    for payload in _ru_payload(bot):
+        russian = (payload.get("name_localizations") or {}).get("ru")
+        check(russian, payload["name"])
+        for option in payload.get("options") or []:
+            option_russian = (option.get("name_localizations") or {}).get("ru")
+            if option_russian:
+                check(option_russian, f"{payload['name']} {option['name']}")
+
+
+def test_other_locales_keep_english_names(bot):
+    """Для остальных локалей переводчик молчит, имена остаются английскими."""
+
+    async def translate(locale):
+        translator = RussianCommandTranslator()
+        context = discord.app_commands.TranslationContext(
+            location=discord.app_commands.TranslationContextLocation.command_name,
+            data=None,
+        )
+        return await translator.translate(
+            discord.app_commands.locale_str("stop"), locale, context
+        )
+
+    assert asyncio.run(translate(discord.Locale.russian)) == "стоп"
+    assert asyncio.run(translate(discord.Locale.american_english)) is None

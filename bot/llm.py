@@ -232,9 +232,21 @@ class SupportAgent:
                 max_tokens=settings.AI_MAX_TOKENS,
             )
             answer = response.choices[0].message.content or ""
+            finish_reason = response.choices[0].finish_reason
+            
+            if finish_reason == "length":
+                logger.warning(
+                    "Ответ AI обрезан (finish_reason=length), возможно не хватает max_tokens | "
+                    "model=%s | max_tokens=%s | preview=%s",
+                    model,
+                    settings.AI_MAX_TOKENS,
+                    answer[:200].replace("\n", " "),
+                )
+            
             logger.info(
-                "Ответ AI получен | model=%s | preview=%s",
+                "Ответ AI получен | model=%s | finish_reason=%s | preview=%s",
                 model,
+                finish_reason,
                 answer[:200].replace("\n", " "),
             )
             return answer or ERROR_GENERIC
@@ -267,9 +279,21 @@ class SupportAgent:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.5,
-            max_tokens=200,
+            max_tokens=1024,
         )
-        return response.choices[0].message.content or ""
+        answer = response.choices[0].message.content or ""
+        finish_reason = response.choices[0].finish_reason
+        
+        # Если модель не закончила генерацию, это обрезанный ответ.
+        if finish_reason == "length":
+            logger.warning(
+                "Ответ напоминания обрезан (finish_reason=length), "
+                "используем статичную фразу | model=%s",
+                models.get(),
+            )
+            return ""
+        
+        return answer
 
     def summarize_ticket(self, transcript: str) -> str:
         """Сводка тикета для администратора."""
@@ -287,9 +311,18 @@ class SupportAgent:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=700,
+            max_tokens=1024,
         )
-        return response.choices[0].message.content or "Не удалось получить сводку."
+        answer = response.choices[0].message.content or ""
+        finish_reason = response.choices[0].finish_reason
+        
+        if finish_reason == "length":
+            logger.warning(
+                "Сводка тикета обрезана (finish_reason=length) | model=%s",
+                models.get(),
+            )
+        
+        return answer or "Не удалось получить сводку."
 
 
 __all__ = [
