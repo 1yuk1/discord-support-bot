@@ -161,6 +161,14 @@ OPENROUTER_API_URL: str = _openrouter_cfg.get("api_url", "https://openrouter.ai/
 OPENROUTER_SITE_URL: str = _openrouter_cfg.get("site_url", "")
 OPENROUTER_APP_NAME: str = _openrouter_cfg.get("app_name", "SinusSMP Support Bot")
 
+_fallback_cfg = _ai_cfg.get("fallback")
+_fallback_cfg = _fallback_cfg if isinstance(_fallback_cfg, dict) else {}
+FALLBACK_AI_ENABLED: bool = bool(_fallback_cfg.get("enabled", False))
+FALLBACK_AI_API_KEY: str = _fallback_cfg.get("api_key", "")
+FALLBACK_AI_MODEL: str = _fallback_cfg.get("model", "")
+FALLBACK_AI_API_URL: str = _fallback_cfg.get("api_url", "")
+FALLBACK_AI_USE_PROXY: bool = bool(_fallback_cfg.get("use_proxy", False))
+
 # ── Proxy ────────────────────────────────────────────────────────────────────
 _proxy_cfg = _section("proxy")
 USE_PROXY: bool = bool(_proxy_cfg.get("enabled", False))
@@ -408,6 +416,8 @@ RESTART_REQUIRED_KEYS: tuple[str, ...] = (
     "[ai].embedding_model",
     "[ai].embedding_model_type",
     "[ai].max_concurrent_requests",
+    "[ai.openrouter].*",
+    "[ai.fallback].*",
     "[knowledge].collection_name",
     "[reminders].check_interval_minutes",
     "[developer_logs].*",

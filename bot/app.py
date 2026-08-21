@@ -10,7 +10,7 @@ from discord.ext import commands, tasks
 from bot import incidents, settings, ticket_logs
 from bot.commands import register_commands
 from bot.handlers import MessageRouter
-from bot.llm import SupportAgent, build_proxy_url, create_client
+from bot.llm import SupportAgent, build_proxy_url, create_providers
 from bot.logging_setup import log_exception, logger
 from bot.prompt import prompts
 from bot.rag import KnowledgeIndexError, open_knowledge_index
@@ -77,7 +77,7 @@ def build_application() -> commands.Bot:
     except KnowledgeIndexError as exc:
         raise SystemExit(f"База знаний недоступна: {exc}") from exc
 
-    agent = SupportAgent(create_client(), index)
+    agent = SupportAgent(create_providers(), index)
     bot = _create_bot()
     router = MessageRouter(bot, agent)
 

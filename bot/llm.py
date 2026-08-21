@@ -1,6 +1,7 @@
-"""Работа с LLM через OpenRouter: клиент, генерация ответов и сводок."""
+"""Работа с LLM через OpenRouter и резервный OpenAI-совместимый провайдер."""
 
 import base64
+from dataclasses import dataclass
 
 import httpx
 
@@ -50,16 +51,67 @@ class ModelRegistry:
 
 
 models = ModelRegistry(settings.OPENROUTER_MODEL)
+fallback_models = ModelRegistry(settings.FALLBACK_AI_MODEL)
 
 
-def create_client():
-    """Создаёт клиент OpenRouter. Падает с понятной ошибкой при пустом конфиге."""
+@dataclass
+class LlmProvider:
+    """OpenAI-совместимый провайдер и его независимая модель."""
+
+    name: str
+    client: object
+    model_registry: ModelRegistry
+
+
+def _create_openai_client(
+    api_key: str,
+    api_url: str,
+    headers: dict[str, str],
+    use_proxy: bool,
+    timeout_seconds: float,
+):
+    """Создаёт OpenAI-совместимый клиент с одним сетевым запросом на провайдера."""
     from openai import OpenAI
 
+    if use_proxy:
+        timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 15))
+        http_client = httpx.Client(
+            transport=httpx.HTTPTransport(proxy=build_proxy_url()),
+            timeout=timeout,
+        )
+        return OpenAI(
+            api_key=api_key,
+            base_url=api_url,
+            default_headers=headers,
+            http_client=http_client,
+            # Fallback уже является повторной попыткой через независимую сеть.
+            max_retries=0,
+        )
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=api_url,
+        default_headers=headers,
+        timeout=timeout_seconds,
+        max_retries=0,
+    )
+
+
+def create_providers() -> list[LlmProvider]:
+    """Создаёт основной OpenRouter и необязательный резервный провайдер."""
     if not settings.OPENROUTER_API_KEY:
         raise SystemExit("settings.toml: [ai.openrouter].api_key не указан")
     if not settings.OPENROUTER_MODEL:
         raise SystemExit("settings.toml: [ai.openrouter].model не указана")
+    if settings.FALLBACK_AI_ENABLED and not settings.FALLBACK_AI_API_KEY:
+        raise SystemExit("settings.toml: [ai.fallback].api_key не указан")
+    if settings.FALLBACK_AI_ENABLED and not settings.FALLBACK_AI_MODEL:
+        raise SystemExit("settings.toml: [ai.fallback].model не указана")
+    if settings.FALLBACK_AI_ENABLED and not settings.FALLBACK_AI_API_URL:
+        raise SystemExit("settings.toml: [ai.fallback].api_url не указан")
+
+    provider_count = 2 if settings.FALLBACK_AI_ENABLED else 1
+    timeout_seconds = settings.AI_REQUEST_TIMEOUT_SECONDS / provider_count
 
     headers = {}
     if settings.OPENROUTER_SITE_URL:
@@ -67,33 +119,47 @@ def create_client():
     if settings.OPENROUTER_APP_NAME:
         headers["X-Title"] = settings.OPENROUTER_APP_NAME
 
+    providers = [
+        LlmProvider(
+            name="openrouter",
+            client=_create_openai_client(
+                settings.OPENROUTER_API_KEY,
+                settings.OPENROUTER_API_URL,
+                headers,
+                settings.USE_PROXY,
+                timeout_seconds,
+            ),
+            model_registry=models,
+        )
+    ]
     logger.info("AI провайдер: OpenRouter | модель=%s", settings.OPENROUTER_MODEL)
-
     if settings.USE_PROXY:
         logger.info("OpenRouter через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
-        timeout = httpx.Timeout(
-            settings.AI_REQUEST_TIMEOUT_SECONDS,
-            connect=min(settings.AI_REQUEST_TIMEOUT_SECONDS, 15),
-        )
-        http_client = httpx.Client(
-            transport=httpx.HTTPTransport(proxy=build_proxy_url()),
-            timeout=timeout,
-        )
-        return OpenAI(
-            api_key=settings.OPENROUTER_API_KEY,
-            base_url=settings.OPENROUTER_API_URL,
-            default_headers=headers,
-            http_client=http_client,
-            max_retries=1,
-        )
 
-    return OpenAI(
-        api_key=settings.OPENROUTER_API_KEY,
-        base_url=settings.OPENROUTER_API_URL,
-        default_headers=headers,
-        timeout=settings.AI_REQUEST_TIMEOUT_SECONDS,
-        max_retries=1,
-    )
+    if settings.FALLBACK_AI_ENABLED:
+        providers.append(
+            LlmProvider(
+                name="fallback",
+                client=_create_openai_client(
+                    settings.FALLBACK_AI_API_KEY,
+                    settings.FALLBACK_AI_API_URL,
+                    {},
+                    settings.FALLBACK_AI_USE_PROXY,
+                    timeout_seconds,
+                ),
+                model_registry=fallback_models,
+            )
+        )
+        logger.info("AI резервный провайдер | модель=%s", settings.FALLBACK_AI_MODEL)
+        if settings.FALLBACK_AI_USE_PROXY:
+            logger.info("Резервный AI-провайдер через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+
+    return providers
+
+
+def create_client():
+    """Совместимость для внешнего кода, которому нужен только основной клиент."""
+    return create_providers()[0].client
 
 
 def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
@@ -140,7 +206,9 @@ def _classify_error(exc: Exception) -> str:
     text = str(exc).lower()
     if "429" in text or "rate_limit" in text or "rate limit" in text:
         return ERROR_RATE_LIMIT
-    if "connect" in text or "timeout" in text or "network" in text:
+    if "timeout" in text:
+        return ERROR_TIMEOUT
+    if "connect" in text or "network" in text:
         return ERROR_CONNECTION
     return ERROR_GENERIC
 
@@ -148,9 +216,45 @@ def _classify_error(exc: Exception) -> str:
 class SupportAgent:
     """Генерация ответов игроку и сводок для администраторов."""
 
-    def __init__(self, client, index: KnowledgeIndex) -> None:
-        self._client = client
+    def __init__(self, client_or_providers, index: KnowledgeIndex) -> None:
+        if isinstance(client_or_providers, (list, tuple)):
+            self._providers = list(client_or_providers)
+        else:
+            # Сохраняет совместимость с изолированными тестами и внешними вызовами.
+            self._providers = [LlmProvider("openrouter", client_or_providers, models)]
+        if not self._providers:
+            raise ValueError("Не настроен ни один AI-провайдер")
+        self._client = self._providers[0].client
         self._index = index
+
+    def _complete(self, messages: list[dict], temperature: float, max_tokens: int):
+        """Запрашивает провайдеров по очереди, начиная с OpenRouter."""
+        last_error: Exception | None = None
+        for position, provider in enumerate(self._providers):
+            model = provider.model_registry.get()
+            try:
+                response = provider.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                answer = response.choices[0].message.content or ""
+                if not answer.strip():
+                    raise ValueError("Провайдер вернул пустой ответ")
+                return response, provider
+            except Exception as exc:
+                last_error = exc
+                if position + 1 < len(self._providers):
+                    logger.warning(
+                        "Сбой AI-провайдера, включён резерв | provider=%s | model=%s | error=%s",
+                        provider.name,
+                        model,
+                        exc.__class__.__name__,
+                    )
+
+        assert last_error is not None
+        raise last_error
 
     def _build_context(self, user_input: str) -> str:
         # Короткие реплики («60», «да», «шлемофон») в RAG не идут: эмбеддер
@@ -212,11 +316,10 @@ class SupportAgent:
         else:
             messages.append({"role": "user", "content": text_content})
 
-        model = models.get()
         logger.info(
-            "Запрос к AI | model=%s | messages=%s | has_context=%s | инцидентов=%s | "
+            "Запрос к AI | primary_model=%s | messages=%s | has_context=%s | инцидентов=%s | "
             "images=%s | preview=%s",
-            model,
+            self._providers[0].model_registry.get(),
             len(messages),
             bool(context),
             len(incidents.active()),
@@ -225,11 +328,8 @@ class SupportAgent:
         )
 
         try:
-            response = self._client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=settings.AI_TEMPERATURE,
-                max_tokens=settings.AI_MAX_TOKENS,
+            response, provider = self._complete(
+                messages, settings.AI_TEMPERATURE, settings.AI_MAX_TOKENS
             )
             answer = response.choices[0].message.content or ""
             finish_reason = response.choices[0].finish_reason
@@ -238,14 +338,15 @@ class SupportAgent:
                 logger.warning(
                     "Ответ AI обрезан (finish_reason=length), возможно не хватает max_tokens | "
                     "model=%s | max_tokens=%s | preview=%s",
-                    model,
+                    provider.model_registry.get(),
                     settings.AI_MAX_TOKENS,
                     answer[:200].replace("\n", " "),
                 )
             
             logger.info(
-                "Ответ AI получен | model=%s | finish_reason=%s | preview=%s",
-                model,
+                "Ответ AI получен | provider=%s | model=%s | finish_reason=%s | preview=%s",
+                provider.name,
+                provider.model_registry.get(),
                 finish_reason,
                 answer[:200].replace("\n", " "),
             )
@@ -254,7 +355,7 @@ class SupportAgent:
             log_exception(
                 "Ошибка генерации ответа AI",
                 exc,
-                model=model,
+                model=self._providers[0].model_registry.get(),
                 user_input_preview=user_input[:200],
             )
             return _classify_error(exc)
@@ -266,9 +367,8 @@ class SupportAgent:
         ошибка здесь не должна отменять само напоминание.
         """
         prompt = prompts.reminder.replace("{TRANSCRIPT}", transcript)
-        response = self._client.chat.completions.create(
-            model=models.get(),
-            messages=[
+        response, provider = self._complete(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -278,8 +378,8 @@ class SupportAgent:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.5,
-            max_tokens=1024,
+            0.5,
+            1024,
         )
         answer = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason
@@ -289,7 +389,7 @@ class SupportAgent:
             logger.warning(
                 "Ответ напоминания обрезан (finish_reason=length), "
                 "используем статичную фразу | model=%s",
-                models.get(),
+                provider.model_registry.get(),
             )
             return ""
         
@@ -298,9 +398,8 @@ class SupportAgent:
     def summarize_ticket(self, transcript: str) -> str:
         """Сводка тикета для администратора."""
         prompt = prompts.summary.replace("{TRANSCRIPT}", transcript)
-        response = self._client.chat.completions.create(
-            model=models.get(),
-            messages=[
+        response, provider = self._complete(
+            [
                 {
                     "role": "system",
                     "content": (
@@ -310,8 +409,8 @@ class SupportAgent:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,
-            max_tokens=1024,
+            0.1,
+            1024,
         )
         answer = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason
@@ -319,7 +418,7 @@ class SupportAgent:
         if finish_reason == "length":
             logger.warning(
                 "Сводка тикета обрезана (finish_reason=length) | model=%s",
-                models.get(),
+                provider.model_registry.get(),
             )
         
         return answer or "Не удалось получить сводку."
@@ -332,5 +431,7 @@ __all__ = [
     "TRANSFER_ANSWER",
     "build_proxy_url",
     "create_client",
+    "create_providers",
     "models",
+    "fallback_models",
 ]

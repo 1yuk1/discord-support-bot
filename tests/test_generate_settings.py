@@ -51,6 +51,25 @@ def test_minimal_config_is_valid(tmp_path):
     assert config["discord"]["token"] == "test-token"
     assert config["ai"]["openrouter"]["api_key"] == "test-key"
     assert config["proxy"]["enabled"] is False
+    assert config["ai"]["fallback"]["enabled"] is False
+    assert config["ai"]["fallback"]["api_url"] == ""
+
+
+def test_fallback_provider_config_is_generated(tmp_path):
+    config = generate(
+        tmp_path,
+        FALLBACK_AI_ENABLED="true",
+        FALLBACK_AI_API_KEY="secondary-key",
+        FALLBACK_AI_MODEL="provider/model",
+        FALLBACK_AI_API_URL="https://example.test/v1",
+        FALLBACK_AI_USE_PROXY="true",
+    )
+
+    provider = config["ai"]["fallback"]
+    assert provider["enabled"] is True
+    assert provider["api_key"] == "secondary-key"
+    assert provider["model"] == "provider/model"
+    assert provider["use_proxy"] is True
 
 
 def run_expecting_failure(tmp_path, **env_overrides):

@@ -20,7 +20,7 @@ from discord.ext import commands
 
 from bot import incidents, reminders, settings
 from bot.discord_client import reply_private, safe_send
-from bot.llm import models
+from bot.llm import fallback_models, models
 from bot.logging_setup import log_exception, logger
 from bot.filters import extract_message_text
 from bot.prompt import prompts
@@ -216,7 +216,12 @@ async def _collect_transcript(channel, limit: int, exclude_message_id=None) -> s
 
 
 def _do_model_show() -> str:
-    return f"Провайдер: openrouter\nТекущая модель: {models.get()}"
+    lines = [f"Основной провайдер: openrouter\nМодель: {models.get()}"]
+    if settings.FALLBACK_AI_ENABLED:
+        lines.append(f"Резервный AI-провайдер\nМодель: {fallback_models.get()}")
+    else:
+        lines.append("Резервный провайдер: выключен")
+    return "\n\n".join(lines)
 
 
 def _do_model_set(model_name: str, author) -> str:
@@ -587,16 +592,16 @@ def _register_slash_commands(bot, agent, router=None) -> None:
         default_permissions=discord.Permissions(administrator=True),
     )
 
-    @model_group.command(name="show", description="Показать текущую модель")
+    @model_group.command(name="show", description="Показать модели провайдеров")
     async def slash_model_show(interaction: discord.Interaction):
         await reply_private(interaction, _do_model_show())
 
-    @model_group.command(name="set", description="Сменить модель до рестарта")
+    @model_group.command(name="set", description="Сменить основную модель до рестарта")
     @app_commands.describe(model="Идентификатор модели OpenRouter")
     async def slash_model_set(interaction: discord.Interaction, model: str):
         await reply_private(interaction, _do_model_set(model, interaction.user))
 
-    @model_group.command(name="save", description="Сменить модель и записать в settings.toml")
+    @model_group.command(name="save", description="Сменить основную модель и записать в settings.toml")
     @app_commands.describe(model="Идентификатор модели OpenRouter")
     async def slash_model_save(interaction: discord.Interaction, model: str):
         await reply_private(interaction, _do_model_save(model, interaction.user))

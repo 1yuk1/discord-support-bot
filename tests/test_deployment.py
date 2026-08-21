@@ -127,6 +127,13 @@ def test_egg_declares_required_variables():
     egg = json.loads(EGG.read_text(encoding="utf-8"))
     declared = {variable["env_variable"] for variable in egg["variables"]}
     assert {"DISCORD_TOKEN", "OPENROUTER_API_KEY"}.issubset(declared)
+    assert {
+        "FALLBACK_AI_ENABLED",
+        "FALLBACK_AI_API_KEY",
+        "FALLBACK_AI_MODEL",
+        "FALLBACK_AI_API_URL",
+        "FALLBACK_AI_USE_PROXY",
+    }.issubset(declared)
 
 
 def test_egg_variables_used_by_generator():

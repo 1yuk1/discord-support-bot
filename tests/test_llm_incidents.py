@@ -24,6 +24,7 @@ class FakeCompletions:
 
         class Choice:
             message = type("Message", (), {"content": "Ответ бота"})()
+            finish_reason = "stop"
 
         return type("Response", (), {"choices": [Choice()]})()
 

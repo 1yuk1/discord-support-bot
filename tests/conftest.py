@@ -28,6 +28,13 @@ search_top_k = 2
 api_key = "test-key"
 model = "test-model"
 
+[ai.fallback]
+enabled = false
+api_key = ""
+model = ""
+api_url = ""
+use_proxy = false
+
 [proxy]
 enabled = false
 host = "127.0.0.1"

@@ -116,6 +116,11 @@ REQUIRED_VARS = (
 KNOWN_OPTIONAL_VARS = (
     "SETTINGS_FORCE_REGENERATE",
     "OPENROUTER_MODEL",
+    "FALLBACK_AI_ENABLED",
+    "FALLBACK_AI_API_KEY",
+    "FALLBACK_AI_MODEL",
+    "FALLBACK_AI_API_URL",
+    "FALLBACK_AI_USE_PROXY",
     "TICKET_CATEGORY_IDS",
     "TICKET_CATEGORY_ID",
     "BOT_ROLE_IDS",
@@ -198,6 +203,15 @@ model = {quote(env("OPENROUTER_MODEL", "mimo-2.5-pro"))}
 api_url = {quote(env("OPENROUTER_API_URL", "https://openrouter.ai/api/v1"))}
 site_url = {quote(env("OPENROUTER_SITE_URL"))}
 app_name = {quote(env("OPENROUTER_APP_NAME", "SinusSMP Support Bot"))}
+
+[ai.fallback]
+# Резервный OpenAI-совместимый провайдер. При ошибке OpenRouter бот повторит
+# запрос через него. При enabled=true обязательны api_key, model и api_url.
+enabled = {boolean("FALLBACK_AI_ENABLED", False)}
+api_key = {quote(env("FALLBACK_AI_API_KEY"))}
+model = {quote(env("FALLBACK_AI_MODEL"))}
+api_url = {quote(env("FALLBACK_AI_API_URL"))}
+use_proxy = {boolean("FALLBACK_AI_USE_PROXY", False)}
 
 [proxy]
 enabled = {boolean("USE_PROXY", False)}

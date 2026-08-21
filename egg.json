@@ -7,7 +7,7 @@
     "exported_at": "2026-08-08T00:00:00.000Z",
     "name": "Discord Support Bot",
     "author": "1yuk1@github.com",
-    "description": "Discord бот поддержки с AI (OpenRouter) и базой знаний ChromaDB. Код обновляется из GitHub при каждом запуске, settings.toml генерируется из переменных ниже.",
+    "description": "Discord бот поддержки с AI (OpenRouter и резервный провайдер) и базой знаний ChromaDB. Код обновляется из GitHub при каждом запуске, settings.toml генерируется из переменных ниже.",
     "features": null,
     "docker_images": {
         "Discord Support Bot": "ghcr.io/1yuk1/discord-support-bot:latest"
@@ -56,6 +56,56 @@
             "user_viewable": true,
             "user_editable": true,
             "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Fallback AI Enabled",
+            "description": "Включить резервный AI-провайдер при ошибке OpenRouter (true/false)",
+            "env_variable": "FALLBACK_AI_ENABLED",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Fallback AI API Key",
+            "description": "API-ключ резервного OpenAI-совместимого провайдера. Нужен только при его включении.",
+            "env_variable": "FALLBACK_AI_API_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Fallback AI Model",
+            "description": "Идентификатор резервной модели. Для скриншотов выберите модель с поддержкой изображений.",
+            "env_variable": "FALLBACK_AI_MODEL",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Fallback AI API URL",
+            "description": "OpenAI-совместимый адрес резервного провайдера, включая /v1.",
+            "env_variable": "FALLBACK_AI_API_URL",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string",
+            "field_type": "text"
+        },
+        {
+            "name": "Fallback AI Use Proxy",
+            "description": "Использовать прокси для резервного AI-провайдера независимо от OpenRouter (true/false)",
+            "env_variable": "FALLBACK_AI_USE_PROXY",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
             "field_type": "text"
         },
         {
