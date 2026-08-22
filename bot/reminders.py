@@ -14,7 +14,8 @@
 
 import random
 import time
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timezone
+import zoneinfo
 
 from bot import settings
 from bot.logging_setup import log_exception, logger
@@ -85,6 +86,54 @@ def waiting_since(state: dict) -> float:
     return player_time
 
 
+def is_in_quiet_hours(config: dict, now_dt: datetime | None = None) -> bool:
+    """Проверяет, попадает ли текущее время в ночное окно тишины.
+    
+    quiet_hours_timezone: строка временной зоны (напр. 'Europe/Moscow')
+    quiet_hours_start: 'HH:MM' (напр. '23:00')
+    quiet_hours_end: 'HH:MM' (напр. '09:00')
+    """
+    start_str = str(config.get("quiet_hours_start") or "").strip()
+    end_str = str(config.get("quiet_hours_end") or "").strip()
+    
+    if not start_str or not end_str:
+        return False
+
+    tz_name = str(config.get("quiet_hours_timezone") or "Europe/Moscow").strip()
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+
+    if now_dt is None:
+        local_now = datetime.now(tz)
+    else:
+        if now_dt.tzinfo is None:
+            local_now = now_dt.replace(tzinfo=timezone.utc).astimezone(tz)
+        else:
+            local_now = now_dt.astimezone(tz)
+
+    current_time = local_now.time()
+
+    try:
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+        start_time = dtime(sh, sm)
+        end_time = dtime(eh, em)
+    except Exception:
+        return False
+
+    if start_time == end_time:
+        return False
+
+    if start_time < end_time:
+        # В пределах одного дня, например 01:00 - 06:00
+        return start_time <= current_time < end_time
+    else:
+        # Переход через полночь, например 23:00 - 09:00
+        return current_time >= start_time or current_time < end_time
+
+
 def should_remind(state: dict, config: dict, now: float | None = None) -> bool:
     """Пора ли напоминать в этом канале."""
     if not config.get("enabled"):
@@ -95,14 +144,19 @@ def should_remind(state: dict, config: dict, now: float | None = None) -> bool:
         # Пинговать некого — на тестовом сервере роли поддержки может не быть.
         return False
 
-    now = time.time() if now is None else now
+    now_ts = time.time() if now is None else now
+
+    # Проверка окна тишины (ночное время). В окне тишины напоминание не отправляется.
+    dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    if is_in_quiet_hours(config, dt):
+        return False
 
     started = waiting_since(state)
     if not started:
         return False
 
     idle_seconds = max(float(config.get("idle_hours", 1)), 0) * 3600
-    if now - started < idle_seconds:
+    if now_ts - started < idle_seconds:
         return False
 
     _reset_daily_counter_if_needed(state)
@@ -113,7 +167,7 @@ def should_remind(state: dict, config: dict, now: float | None = None) -> bool:
     last_reminder = float(state.get("last_reminder_time") or 0.0)
     if last_reminder:
         repeat_seconds = max(float(config.get("repeat_hours", 6)), 0) * 3600
-        if now - last_reminder < repeat_seconds:
+        if now_ts - last_reminder < repeat_seconds:
             return False
 
     return True

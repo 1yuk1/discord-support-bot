@@ -260,6 +260,8 @@ def reminder_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "REMINDER_EXCLUDED_CATEGORY_IDS", [])
     monkeypatch.setattr(settings, "REMINDER_CATEGORY_OVERRIDES", {})
     monkeypatch.setattr(settings, "REMINDER_MESSAGE_MODE", "static")
+    monkeypatch.setattr(settings, "QUIET_HOURS_START", "")
+    monkeypatch.setattr(settings, "QUIET_HOURS_END", "")
     monkeypatch.setattr(settings, "STATE_SNAPSHOT_FILE", str(tmp_path / "state.json"))
 
     store._channels.clear()

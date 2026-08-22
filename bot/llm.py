@@ -1,6 +1,8 @@
 """Работа с LLM через OpenRouter и резервный OpenAI-совместимый провайдер."""
 
 import base64
+import random
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -61,6 +63,36 @@ class LlmProvider:
     name: str
     client: object
     model_registry: ModelRegistry
+    circuit_open_until: float = 0.0
+    failure_count: int = 0
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Определяет, является ли ошибка временной (timeout, 429, 5xx, network).
+    
+    Не повторяет постоянные ошибки (400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found).
+    """
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        if status_code in (400, 401, 403, 404):
+            return False
+        if status_code == 429 or status_code >= 500:
+            return True
+
+    text = str(exc).lower()
+    for fatal in ("400", "401", "403", "404", "unauthorized", "invalid_api_key", "invalid api key", "authentication"):
+        if fatal in text:
+            return False
+
+    # Временные сетевые ошибки и таймауты
+    retryable_patterns = (
+        "timeout", "timed out", "429", "rate limit", "rate_limit",
+        "500", "502", "503", "504", "server error", "internal error",
+        "connection", "network", "pool", "econnreset", "socket", "closed",
+    )
+    return any(p in text for p in retryable_patterns) or isinstance(
+        exc, (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError)
+    )
 
 
 def _create_openai_client(
@@ -70,29 +102,44 @@ def _create_openai_client(
     use_proxy: bool,
     timeout_seconds: float,
 ):
-    """Создаёт OpenAI-совместимый клиент с одним сетевым запросом на провайдера."""
+    """Создаёт OpenAI-совместимый клиент с тонкой настройкой таймаутов (connect/read/write/pool)."""
     from openai import OpenAI
 
+    # Разделение общего таймаута: connect=10s, pool=5s, read/write из остатка
+    connect_timeout = min(10.0, max(2.0, timeout_seconds * 0.2))
+    pool_timeout = min(5.0, max(2.0, timeout_seconds * 0.1))
+    read_timeout = max(timeout_seconds, 5.0)
+    write_timeout = min(15.0, max(5.0, timeout_seconds * 0.3))
+
+    httpx_timeout = httpx.Timeout(
+        timeout=timeout_seconds,
+        connect=connect_timeout,
+        read=read_timeout,
+        write=write_timeout,
+        pool=pool_timeout,
+    )
+
     if use_proxy:
-        timeout = httpx.Timeout(timeout_seconds, connect=min(timeout_seconds, 15))
         http_client = httpx.Client(
             transport=httpx.HTTPTransport(proxy=build_proxy_url()),
-            timeout=timeout,
+            timeout=httpx_timeout,
         )
         return OpenAI(
             api_key=api_key,
             base_url=api_url,
             default_headers=headers,
             http_client=http_client,
-            # Fallback уже является повторной попыткой через независимую сеть.
             max_retries=0,
         )
 
+    http_client = httpx.Client(
+        timeout=httpx_timeout,
+    )
     return OpenAI(
         api_key=api_key,
         base_url=api_url,
         default_headers=headers,
-        timeout=timeout_seconds,
+        http_client=http_client,
         max_retries=0,
     )
 
@@ -219,6 +266,8 @@ class SupportAgent:
     def __init__(self, client_or_providers, index: KnowledgeIndex) -> None:
         if isinstance(client_or_providers, (list, tuple)):
             self._providers = list(client_or_providers)
+        elif isinstance(client_or_providers, LlmProvider):
+            self._providers = [client_or_providers]
         else:
             # Сохраняет совместимость с изолированными тестами и внешними вызовами.
             self._providers = [LlmProvider("openrouter", client_or_providers, models)]
@@ -228,30 +277,86 @@ class SupportAgent:
         self._index = index
 
     def _complete(self, messages: list[dict], temperature: float, max_tokens: int):
-        """Запрашивает провайдеров по очереди, начиная с OpenRouter."""
+        """Запрашивает провайдеров по очереди (OpenRouter -> Fallback) с retry, backoff и circuit breaker."""
         last_error: Exception | None = None
+        now = time.time()
+
         for position, provider in enumerate(self._providers):
-            model = provider.model_registry.get()
-            try:
-                response = provider.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+            # Проверка Circuit Breaker: если провайдер временно отключен
+            if provider.circuit_open_until > now:
+                logger.warning(
+                    "Провайдер %s временно отключен Circuit Breaker до %s, пропуск",
+                    provider.name,
+                    provider.circuit_open_until,
                 )
-                answer = response.choices[0].message.content or ""
-                if not answer.strip():
-                    raise ValueError("Провайдер вернул пустой ответ")
-                return response, provider
-            except Exception as exc:
-                last_error = exc
-                if position + 1 < len(self._providers):
-                    logger.warning(
-                        "Сбой AI-провайдера, включён резерв | provider=%s | model=%s | error=%s",
-                        provider.name,
-                        model,
-                        exc.__class__.__name__,
+                continue
+
+            model = provider.model_registry.get()
+            max_attempts = 2  # до 2 попыток на провайдер для временных сбоев
+            base_backoff = 0.5
+
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = provider.client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                     )
+                    answer = response.choices[0].message.content or ""
+                    if not answer.strip():
+                        raise ValueError("Провайдер вернул пустой ответ")
+                    
+                    # Успех — сбрасываем счетчик ошибок
+                    provider.failure_count = 0
+                    provider.circuit_open_until = 0.0
+                    return response, provider
+                except Exception as exc:
+                    last_error = exc
+                    
+                    # Проверяем, стоит ли делать retry
+                    is_retryable = _is_retryable_error(exc)
+                    
+                    if not is_retryable:
+                        logger.warning(
+                            "Неповторяемая ошибка AI-провайдера (auth/config/bad_request) | provider=%s | model=%s | error=%s",
+                            provider.name,
+                            model,
+                            exc,
+                        )
+                        break
+
+                    if attempt < max_attempts:
+                        # Exponential backoff с jitter
+                        jitter = random.uniform(0.1, 0.4)
+                        delay = (base_backoff * (2 ** (attempt - 1))) + jitter
+                        logger.warning(
+                            "Временный сбой AI (%s), повторная попытка через %.2fс | provider=%s | model=%s | error=%s",
+                            attempt,
+                            delay,
+                            provider.name,
+                            model,
+                            exc.__class__.__name__,
+                        )
+                        time.sleep(delay)
+
+            # Если все попытки у провайдера провалились
+            provider.failure_count += 1
+            if provider.failure_count >= 3:
+                # Открываем Circuit Breaker на 60 секунд
+                provider.circuit_open_until = time.time() + 60.0
+                logger.error(
+                    "Circuit Breaker сработал для %s (3 сбоя подряд), отключен на 60с",
+                    provider.name,
+                )
+
+            if position + 1 < len(self._providers):
+                logger.warning(
+                    "Сбой AI-провайдера, включён резерв | provider=%s | model=%s | error=%s",
+                    provider.name,
+                    model,
+                    last_error.__class__.__name__ if last_error else "unknown",
+                )
 
         assert last_error is not None
         raise last_error
@@ -379,7 +484,7 @@ class SupportAgent:
                 {"role": "user", "content": prompt},
             ],
             0.5,
-            1024,
+            160,  # Для напоминаний max_tokens=160
         )
         answer = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason

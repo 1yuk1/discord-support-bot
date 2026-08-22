@@ -105,6 +105,17 @@ def id_list(*names: str) -> str:
     return "[]"
 
 
+def str_list(name: str, default: list[str]) -> str:
+    """Парсит список строк из переменной окружения."""
+    raw = env(name)
+    if not raw:
+        items = default
+    else:
+        items = [s.strip() for s in raw.replace(";", ",").split(",") if s.strip()]
+    quoted = [quote(item) for item in items]
+    return "[" + ", ".join(quoted) + "]"
+
+
 # Обязательные переменные и их placeholder-значения из egg.json.
 REQUIRED_VARS = (
     ("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN"),
@@ -129,6 +140,15 @@ KNOWN_OPTIONAL_VARS = (
     "EMBEDDING_MODEL",
     "USE_PROXY",
     "BOT_AUTO_UPDATE",
+    "REMINDER_QUIET_HOURS_TIMEZONE",
+    "REMINDER_QUIET_HOURS_START",
+    "REMINDER_QUIET_HOURS_END",
+    "MENTION_TIMEOUT_ENABLED",
+    "MENTION_PROTECTED_USER_IDS",
+    "MENTION_PROTECTED_ROLE_IDS",
+    "MENTION_TIMEOUT_DURATIONS",
+    "MENTION_ESCALATION_RESET_DAYS",
+    "MENTION_TIMEOUT_REASON",
 )
 
 
@@ -280,6 +300,9 @@ check_interval_minutes = {integer("REMINDER_CHECK_INTERVAL_MINUTES", 10)}
 excluded_category_ids = {id_list("REMINDER_EXCLUDED_CATEGORY_IDS")}
 # llm — текст пишет модель под конкретный тикет; static — фраза из phrases.
 message_mode = {quote(env("REMINDER_MESSAGE_MODE", "llm"))}
+quiet_hours_timezone = {quote(env("REMINDER_QUIET_HOURS_TIMEZONE", "Europe/Moscow"))}
+quiet_hours_start = {quote(env("REMINDER_QUIET_HOURS_START", "23:00"))}
+quiet_hours_end = {quote(env("REMINDER_QUIET_HOURS_END", "09:00"))}
 
 # Роли и тайминги можно переопределить для отдельной категории. Пример:
 # на тестовом сервере роли поддержки нет, поэтому там напоминания выключены.
@@ -291,6 +314,14 @@ message_mode = {quote(env("REMINDER_MESSAGE_MODE", "llm"))}
 #
 # [reminders.categories.987654321098765432]
 # enabled = false
+
+[mention_timeout]
+enabled = {boolean("MENTION_TIMEOUT_ENABLED", True)}
+protected_user_ids = {id_list("MENTION_PROTECTED_USER_IDS")}
+protected_role_ids = {id_list("MENTION_PROTECTED_ROLE_IDS")}
+durations = {str_list("MENTION_TIMEOUT_DURATIONS", ["1m", "10m", "1h"])}
+escalation_reset_days = {integer("MENTION_ESCALATION_RESET_DAYS", 30)}
+reason = {quote(env("MENTION_TIMEOUT_REASON", "Запрещённый пинг участника или роли поддержки"))}
 
 [server]
 min_version = {quote(env("SERVER_MIN_VERSION", "1.19.4"))}

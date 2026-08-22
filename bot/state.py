@@ -61,10 +61,12 @@ def create_channel_state() -> dict:
 
 
 class ConversationStore:
-    """Состояния каналов с периодическим сохранением на диск."""
+    """Состояния каналов и модерации с периодическим сохранением на диск."""
 
     def __init__(self) -> None:
         self._channels: dict[int, dict] = {}
+        # Хранилище нарушений упоминаний: {(guild_id, user_id): {"violations": int, "last_violation_time": float}}
+        self._mention_escalations: dict[tuple[int, int], dict] = {}
         self._dirty = False
 
     def __contains__(self, channel_id: int) -> bool:
@@ -139,9 +141,39 @@ class ConversationStore:
         if len(processed) > _PROCESSED_IDS_LIMIT:
             state["processed_message_ids"] = set(list(processed)[-_PROCESSED_IDS_KEEP:])
 
+    # ── Эскалация нарушений упоминаний ───────────────────────────────────────
+    def get_mention_escalation(self, guild_id: int, user_id: int) -> dict:
+        """Возвращает данные о нарушениях пользователя на сервере с учётом периода сброса."""
+        key = (int(guild_id), int(user_id))
+        record = self._mention_escalations.get(key)
+        if not record:
+            return {"violations": 0, "last_violation_time": 0.0}
+        
+        now = time.time()
+        reset_days = settings.MENTION_ESCALATION_RESET_DAYS
+        if reset_days > 0 and record.get("last_violation_time", 0.0):
+            if now - record["last_violation_time"] > reset_days * 86400:
+                # Период без нарушений истёк — ступень сбрасывается
+                record = {"violations": 0, "last_violation_time": 0.0}
+                self._mention_escalations[key] = record
+                self.mark_dirty()
+        return record
+
+    def record_mention_violation(self, guild_id: int, user_id: int, now: float | None = None) -> int:
+        """Регистрирует нарушение и возвращает новое количество нарушений."""
+        current = self.get_mention_escalation(guild_id, user_id)
+        violations = int(current.get("violations", 0)) + 1
+        record = {
+            "violations": violations,
+            "last_violation_time": time.time() if now is None else float(now),
+        }
+        self._mention_escalations[(int(guild_id), int(user_id))] = record
+        self.mark_dirty()
+        return violations
+
     # ── Сохранение и восстановление ──────────────────────────────────────────
     def _snapshot(self) -> dict:
-        snapshot = {}
+        channels_snapshot = {}
         for channel_id, data in self._channels.items():
             # Сохраняем только каналы с «залипающим» состоянием: историю диалога
             # после рестарта восстанавливать не нужно, а флаги — обязательно.
@@ -156,7 +188,7 @@ class ConversationStore:
                 data.get("last_staff_message_time"),
             )):
                 continue
-            snapshot[str(channel_id)] = {
+            channels_snapshot[str(channel_id)] = {
                 "human_mode": bool(data.get("human_mode")),
                 "bot_disabled": bool(data.get("bot_disabled")),
                 "disabled_by": data.get("disabled_by"),
@@ -171,7 +203,24 @@ class ConversationStore:
                 "reminder_count_today": int(data.get("reminder_count_today", 0) or 0),
                 "reminder_day": data.get("reminder_day", ""),
             }
-        return snapshot
+
+        escalations_snapshot = {}
+        now = time.time()
+        reset_seconds = settings.MENTION_ESCALATION_RESET_DAYS * 86400 if settings.MENTION_ESCALATION_RESET_DAYS > 0 else 0
+        for (g_id, u_id), esc in self._mention_escalations.items():
+            last_v = float(esc.get("last_violation_time", 0.0) or 0.0)
+            if reset_seconds > 0 and last_v and (now - last_v > reset_seconds):
+                continue
+            if esc.get("violations", 0) > 0:
+                escalations_snapshot[f"{g_id}:{u_id}"] = {
+                    "violations": int(esc.get("violations", 0)),
+                    "last_violation_time": last_v,
+                }
+
+        return {
+            "channels": channels_snapshot,
+            "mention_escalations": escalations_snapshot,
+        }
 
     def save(self, force: bool = False) -> None:
         if not force and not self._dirty:
@@ -209,7 +258,11 @@ class ConversationStore:
         now = time.time()
         restored = human_mode = disabled = 0
 
-        for raw_channel_id, data in snapshot.items():
+        # Обратная совместимость со старым форматом {channel_id: data}
+        channels_data = snapshot.get("channels", snapshot) if isinstance(snapshot, dict) else {}
+        escalations_data = snapshot.get("mention_escalations", {}) if isinstance(snapshot, dict) else {}
+
+        for raw_channel_id, data in channels_data.items():
             if not isinstance(data, dict):
                 continue
             try:
@@ -261,11 +314,33 @@ class ConversationStore:
             human_mode += bool(state["human_mode"])
             disabled += bool(state["bot_disabled"])
 
+        # Восстановление эскалаций нарушений упоминаний
+        self._mention_escalations = {}
+        reset_seconds = settings.MENTION_ESCALATION_RESET_DAYS * 86400 if settings.MENTION_ESCALATION_RESET_DAYS > 0 else 0
+        for raw_key, data in escalations_data.items():
+            if not isinstance(data, dict):
+                continue
+            try:
+                g_str, u_str = str(raw_key).split(":")
+                guild_id = int(g_str)
+                user_id = int(u_str)
+            except (ValueError, TypeError):
+                continue
+            
+            last_v = float(data.get("last_violation_time", 0.0) or 0.0)
+            if reset_seconds > 0 and last_v and (now - last_v > reset_seconds):
+                continue
+            self._mention_escalations[(guild_id, user_id)] = {
+                "violations": int(data.get("violations", 0)),
+                "last_violation_time": last_v,
+            }
+
         logger.info(
-            "Восстановлено состояний тикетов: %s | human_mode=%s | выключен вручную=%s",
+            "Восстановлено состояний тикетов: %s | human_mode=%s | выключен вручную=%s | нарушителей упоминаний=%s",
             restored,
             human_mode,
             disabled,
+            len(self._mention_escalations),
         )
 
     def cleanup_expired(self) -> int:

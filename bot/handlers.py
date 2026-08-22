@@ -29,7 +29,7 @@ from bot.llm import ERROR_PREFIX, ERROR_TIMEOUT
 from bot.logging_setup import logger
 from bot.state import store
 from bot.text_utils import normalize_for_dedup
-from bot import reminders, ticket_logs
+from bot import mention_moderation, reminders, ticket_logs
 
 COOLDOWN_NOTICE = "⏳ Подождите {seconds} секунд перед следующим вопросом."
 GLOBAL_LIMIT_NOTICE = "⏳ Слишком много сообщений. Подождите минуту."
@@ -317,6 +317,11 @@ class MessageRouter:
         # Свои же сообщения игнорируем всегда и до любых проверок.
         if bot_user is not None and message.author.id == bot_user.id:
             return
+
+        # Проверка запрещённых упоминаний выполняется рано:
+        # после собственного бота, но до AI, debounce и передачи оператору.
+        if not message.author.bot and not getattr(message.author, "system", False):
+            await mention_moderation.handle_mention_moderation(message)
 
         if not self.is_ticket_channel(channel):
             await self._bot.process_commands(message)

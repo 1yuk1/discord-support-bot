@@ -6,8 +6,10 @@
 """
 
 import os
+import re
 import sys
 import tomllib
+from datetime import timedelta
 from pathlib import Path
 
 BASE_DIR = Path(os.environ.get("APP_BASE_DIR") or Path(__file__).resolve().parent.parent)
@@ -115,6 +117,54 @@ def _parse_id_list(value) -> list[int]:
                 continue
         if parsed != 0 and parsed not in result:
             result.append(parsed)
+    return result
+
+
+def parse_duration_string(value: str | int | float | timedelta) -> timedelta:
+    """Парсит строку длительности (напр. '10s', '1m', '10m', '1h', '1d', '30d') в timedelta."""
+    if isinstance(value, timedelta):
+        return value
+    if isinstance(value, (int, float)):
+        return timedelta(seconds=float(value))
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Некорректный формат длительности: {value!r}")
+    
+    text = value.strip().lower()
+    match = re.fullmatch(r"^(\d+(?:\.\d+)?)\s*([smhd])$", text)
+    if not match:
+        raise ValueError(f"Некорректная длительность '{value}', ожидается формат вида '30s', '5m', '2h', '7d'")
+    
+    num_str, unit = match.groups()
+    num = float(num_str)
+    if unit == "s":
+        return timedelta(seconds=num)
+    elif unit == "m":
+        return timedelta(minutes=num)
+    elif unit == "h":
+        return timedelta(hours=num)
+    elif unit == "d":
+        return timedelta(days=num)
+    raise ValueError(f"Неизвестная единица измерения времени: '{unit}'")
+
+
+def parse_durations_list(value) -> list[timedelta]:
+    """Парсит список или строку с длительностями в list[timedelta]."""
+    if value is None:
+        return []
+    raw_list = []
+    if isinstance(value, (str, int, float, timedelta)):
+        if isinstance(value, str) and "," in value:
+            raw_list = value.split(",")
+        else:
+            raw_list = [value]
+    elif isinstance(value, (list, tuple)):
+        raw_list = list(value)
+    
+    result = []
+    for item in raw_list:
+        if isinstance(item, str) and not item.strip():
+            continue
+        result.append(parse_duration_string(item))
     return result
 
 
@@ -268,6 +318,11 @@ REMINDER_EXCLUDED_CATEGORY_IDS: list[int] = _parse_id_list(
 REMINDER_MESSAGE_MODE: str = str(_reminders_cfg.get("message_mode", "llm")).lower()
 REMINDER_HISTORY_LIMIT: int = int(_reminders_cfg.get("history_limit", 25))
 
+# Ночное окно тишины для напоминаний
+QUIET_HOURS_TIMEZONE: str = str(_reminders_cfg.get("quiet_hours_timezone", "Europe/Moscow")).strip()
+QUIET_HOURS_START: str = str(_reminders_cfg.get("quiet_hours_start", "23:00")).strip()
+QUIET_HOURS_END: str = str(_reminders_cfg.get("quiet_hours_end", "09:00")).strip()
+
 _DEFAULT_REMINDER_PHRASES = [
     "Благодарим за обращение. Ваш вопрос всё ещё в работе — решение занимает "
     "чуть больше времени, чем мы рассчитывали. Спасибо за терпение.",
@@ -322,7 +377,29 @@ def reminder_config_for(category_id) -> dict:
         "max_per_day": int(pick("max_per_day", REMINDER_MAX_PER_DAY)),
         "message_mode": str(pick("message_mode", REMINDER_MESSAGE_MODE)).lower(),
         "phrases": pick("phrases", REMINDER_PHRASES) or _DEFAULT_REMINDER_PHRASES,
+        "quiet_hours_timezone": str(pick("quiet_hours_timezone", QUIET_HOURS_TIMEZONE)).strip(),
+        "quiet_hours_start": str(pick("quiet_hours_start", QUIET_HOURS_START)).strip(),
+        "quiet_hours_end": str(pick("quiet_hours_end", QUIET_HOURS_END)).strip(),
     }
+
+
+# ── Mention timeout ──────────────────────────────────────────────────────────
+_mention_cfg = _section("mention_timeout")
+MENTION_TIMEOUT_ENABLED: bool = bool(_mention_cfg.get("enabled", True))
+MENTION_PROTECTED_USER_IDS: list[int] = _parse_id_list(_mention_cfg.get("protected_user_ids"))
+MENTION_PROTECTED_ROLE_IDS: list[int] = _parse_id_list(_mention_cfg.get("protected_role_ids"))
+
+_default_durations = ["1m", "10m", "1h"]
+_raw_durations = _mention_cfg.get("durations", _default_durations)
+try:
+    MENTION_TIMEOUT_DURATIONS: list[timedelta] = parse_durations_list(_raw_durations) or parse_durations_list(_default_durations)
+except Exception:
+    MENTION_TIMEOUT_DURATIONS = parse_durations_list(_default_durations)
+
+MENTION_ESCALATION_RESET_DAYS: int = int(_mention_cfg.get("escalation_reset_days", 30))
+MENTION_TIMEOUT_REASON: str = str(
+    _mention_cfg.get("reason", "Запрещённый пинг участника или роли поддержки")
+)
 
 
 # ── Server facts ─────────────────────────────────────────────────────────────
@@ -401,6 +478,16 @@ _HOT_RELOADABLE: tuple[tuple, ...] = (
         _parse_id_list,
         [],
     ),
+    ("QUIET_HOURS_TIMEZONE", "reminders", "quiet_hours_timezone", str, "Europe/Moscow"),
+    ("QUIET_HOURS_START", "reminders", "quiet_hours_start", str, "23:00"),
+    ("QUIET_HOURS_END", "reminders", "quiet_hours_end", str, "09:00"),
+
+    ("MENTION_TIMEOUT_ENABLED", "mention_timeout", "enabled", bool, True),
+    ("MENTION_PROTECTED_USER_IDS", "mention_timeout", "protected_user_ids", _parse_id_list, []),
+    ("MENTION_PROTECTED_ROLE_IDS", "mention_timeout", "protected_role_ids", _parse_id_list, []),
+    ("MENTION_TIMEOUT_DURATIONS", "mention_timeout", "durations", parse_durations_list, parse_durations_list(_default_durations)),
+    ("MENTION_ESCALATION_RESET_DAYS", "mention_timeout", "escalation_reset_days", int, 30),
+    ("MENTION_TIMEOUT_REASON", "mention_timeout", "reason", str, "Запрещённый пинг участника или роли поддержки"),
 
     ("INCIDENTS_ENABLED", "incidents", "enabled", bool, True),
 
