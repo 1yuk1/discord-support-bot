@@ -244,6 +244,7 @@ else:
 
 PROXY_STRATEGY: str = str(_proxy_cfg.get("strategy", "failover")).strip().lower()
 PROXY_COOLDOWN_SECONDS: int = int(_proxy_cfg.get("cooldown_seconds", 60))
+DISCORD_USE_PROXY: bool = bool(_proxy_cfg.get("discord_use_proxy", True))
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 _paths_cfg = _section("paths")

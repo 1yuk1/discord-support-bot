@@ -22,18 +22,27 @@ def _create_bot() -> commands.Bot:
     intents.message_content = True
     intents.messages = True
 
-    # help_command=None: своя команда /help и !help заняли бы имя встроенной,
-    # discord.py падает на конфликте при регистрации.
     kwargs = {
         "command_prefix": settings.COMMAND_PREFIX,
         "intents": intents,
         "help_command": None,
     }
 
-    if not settings.USE_PROXY:
+    if not settings.USE_PROXY or not settings.DISCORD_USE_PROXY:
+        logger.info("Discord подключение напрямую (без прокси)")
         return commands.Bot(**kwargs)
 
     active_proxy = build_proxy_url()
+    # aiohttp в discord.py поддерживает только HTTP/HTTPS прокси.
+    if active_proxy.lower().startswith("socks"):
+        safe_socks = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
+        logger.warning(
+            "Прокси %s имеет протокол SOCKS — aiohttp в discord.py требует HTTP-прокси. "
+            "Discord подключается напрямую. Запросы к AI пойдут через SOCKS.",
+            safe_socks,
+        )
+        return commands.Bot(**kwargs)
+
     kwargs["proxy"] = active_proxy
     safe_proxy = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
     logger.info("Discord подключение через прокси: %s", safe_proxy)
@@ -280,7 +289,10 @@ def run() -> None:
             await bot.start(settings.DISCORD_TOKEN)
 
     if settings.USE_PROXY:
-        logger.info("Прокси включён: %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+        if settings.PROXY_URLS:
+            logger.info("Прокси включён (пул из %s адресов, стратегия: %s)", len(settings.PROXY_URLS), settings.PROXY_STRATEGY)
+        else:
+            logger.info("Прокси включён: %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
     else:
         logger.info("Прокси выключен")
 
