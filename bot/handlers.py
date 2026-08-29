@@ -83,12 +83,10 @@ class MessageRouter:
         guild = getattr(member, "guild", None)
         guild_id = getattr(guild, "id", None)
         guild_cfg = settings.get_guild_config(guild_id)
-        return is_staff_member(
-            member,
-            staff_role_ids=guild_cfg.staff_role_ids or list(self._ignored_role_ids),
-            admin_role_ids=guild_cfg.admin_role_ids,
-            admin_user_ids=guild_cfg.admin_user_ids,
-        )
+        staff_roles = set(guild_cfg.staff_role_ids or self._ignored_role_ids)
+        if staff_roles and any(getattr(role, "id", None) in staff_roles for role in getattr(member, "roles", []) or []):
+            return True
+        return False
 
     def bot_has_required_role(self, guild) -> bool:
         guild_id = getattr(guild, "id", None)
@@ -181,7 +179,14 @@ class MessageRouter:
             len(parts),
             text[:200].replace("\n", " "),
         )
-        await self.run_ai_reply(channel, state, text, image_urls, author_is_bot)
+        try:
+            await self.run_ai_reply(channel, state, text, image_urls, author_is_bot)
+        except Exception as exc:
+            log_exception(
+                "Необработанная ошибка при обработке склейки",
+                exc,
+                channel_id=getattr(channel, "id", "unknown"),
+            )
 
     # ── Ответ AI ─────────────────────────────────────────────────────────────
     async def run_ai_reply(self, channel, state: dict, text: str, image_urls, author_is_bot) -> None:
@@ -217,11 +222,12 @@ class MessageRouter:
         )
 
         state["ai_busy"] = True
+        answer = None
         try:
-            async with channel.typing():
+            async def _generate_task():
                 async with self._semaphore:
                     try:
-                        answer = await asyncio.wait_for(
+                        return await asyncio.wait_for(
                             asyncio.to_thread(
                                 self._agent.generate_answer,
                                 text,
@@ -236,7 +242,18 @@ class MessageRouter:
                             channel_id,
                             settings.AI_REQUEST_TIMEOUT_SECONDS,
                         )
-                        answer = ERROR_TIMEOUT
+                        return ERROR_TIMEOUT
+
+            # typing() не должен ломать ответ при сетевых сбоях Discord / прокси
+            try:
+                async with channel.typing():
+                    answer = await _generate_task()
+            except Exception as typing_exc:
+                logger.debug("Сбой отправки статуса 'typing' в Discord (игнорируется): %s", typing_exc)
+                answer = await _generate_task()
+        except Exception as exc:
+            log_exception("Сбой в run_ai_reply", exc, channel_id=channel_id)
+            answer = ERROR_TIMEOUT
         finally:
             state["ai_busy"] = False
 
