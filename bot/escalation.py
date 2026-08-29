@@ -48,12 +48,30 @@ USER_HUMAN_TRANSFER_PHRASES: tuple[str, ...] = (
     "want a real person",
 )
 
-# Маркеры в ответе LLM. Держать максимально узкими: широкая формулировка
-# ("обратитесь к специалисту") приводит к ложной эскалации на обычных ответах.
+TRANSFER_TAG = "[TRANSFER_TO_HUMAN]"
+
+# Маркеры в ответе LLM.
 LLM_TRANSFER_MARKERS: tuple[str, ...] = (
+    TRANSFER_TAG.lower(),
     "я передам ваш тикет старшему специалисту",
     "передам ваш тикет старшему специалисту",
+    "передаю ваш тикет старшему специалисту",
+    "передаю тикет старшему специалисту",
+    "передам тикет старшему специалисту",
+    "i will transfer your ticket",
+    "transferring your ticket",
+    "transfer your ticket to a senior",
 )
+
+
+def strip_transfer_tag(text: str) -> str:
+    """Удаляет служебный маркер [TRANSFER_TO_HUMAN] из текста ответа перед отправкой игроку."""
+    if not text:
+        return ""
+    import re
+    cleaned = re.sub(r"\[TRANSFER_TO_HUMAN\]", "", text, flags=re.IGNORECASE)
+    return " ".join(cleaned.split()).strip()
+
 
 # Темы, которые бот не должен разруливать сам: доступ к аккаунту, наказания,
 # возвраты. Здесь корни слов, а не полные фразы.

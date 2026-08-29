@@ -252,6 +252,8 @@ INCIDENTS_FILE: str = _as_path(_incidents_cfg.get("file"), "data/incidents.md")
 _kb_cfg = _section("knowledge")
 CHROMA_COLLECTION_NAME: str = _kb_cfg.get("collection_name", "sinussmp_support")
 CHROMA_DISTANCE_METRIC: str = _kb_cfg.get("distance_metric", "cosine")
+CHROMA_DISTANCE_THRESHOLD: float = float(_kb_cfg.get("distance_threshold", 0.40))
+ENABLE_HYBRID_SEARCH: bool = bool(_kb_cfg.get("hybrid_search", True))
 EMBEDDING_BATCH_SIZE: int = int(_kb_cfg.get("batch_size", 32))
 # Совместимость векторов: бот отказывается работать с базой, собранной другой
 # моделью. Без этой проверки поиск тихо возвращает мусор.
@@ -490,6 +492,9 @@ _HOT_RELOADABLE: tuple[tuple, ...] = (
     ("MENTION_TIMEOUT_REASON", "mention_timeout", "reason", str, "Запрещённый пинг участника или роли поддержки"),
 
     ("INCIDENTS_ENABLED", "incidents", "enabled", bool, True),
+
+    ("CHROMA_DISTANCE_THRESHOLD", "knowledge", "distance_threshold", float, 0.40),
+    ("ENABLE_HYBRID_SEARCH", "knowledge", "hybrid_search", bool, True),
 
     ("STATE_TTL_SECONDS", "state", "ttl_seconds", int, 7 * 24 * 60 * 60),
 )

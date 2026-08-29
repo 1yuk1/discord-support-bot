@@ -16,6 +16,7 @@ from bot.escalation import (
     is_llm_human_transfer,
     is_user_human_transfer,
     should_force_human_transfer,
+    strip_transfer_tag,
 )
 from bot.filters import (
     IMAGE_ONLY_PLACEHOLDER,
@@ -220,24 +221,27 @@ class MessageRouter:
             state["ai_busy"] = False
 
         is_error = bool(answer) and answer.startswith(ERROR_PREFIX)
+        is_transfer = bool(answer) and is_llm_human_transfer(answer)
+        clean_answer = strip_transfer_tag(answer) if answer else answer
+
         if is_error:
             logger.warning(
                 "Игроку отправлен текст ошибки | channel_id=%s | answer=%s", channel_id, answer
             )
 
-        await safe_send(channel, answer)
+        await safe_send(channel, clean_answer)
 
         state["last_message"] = text
         state["last_message_time"] = time.time()
         if not is_error:
             state["last_answer_time"] = time.time()
 
-        ticket_logs.append_entry(channel, 0, "user", text, bot_response=answer)
-        store.append_turn(state, text, answer, author_is_bot)
+        ticket_logs.append_entry(channel, 0, "user", text, bot_response=clean_answer)
+        store.append_turn(state, text, clean_answer, author_is_bot)
         store.touch(state)
         store.mark_dirty()
 
-        if answer and is_llm_human_transfer(answer):
+        if is_transfer:
             self._activate_human_mode(channel, state, "llm_in_answer")
 
     def _activate_human_mode(self, channel, state: dict, reason: str) -> None:

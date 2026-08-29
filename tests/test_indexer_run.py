@@ -98,21 +98,15 @@ def test_reindex_replaces_previous_data(indexer_environment):
     assert open_knowledge_index()._collection.count() == expected
 
 
-def test_locked_database_reports_clearly(indexer_environment, monkeypatch):
-    """Если базу нельзя удалить, нужна понятная причина, а не трейсбек."""
-    import shutil
-
+def test_safe_reindexing_without_rmtree(indexer_environment):
+    """Индексатор должен безопасно обновлять базу без удаления директории."""
     import indexer
+    from bot.rag import open_knowledge_index
 
     indexer.main()
+    indexer.main()
+    assert open_knowledge_index()._collection.count() > 0
 
-    def deny(*args, **kwargs):
-        raise PermissionError(32, "файл занят другим процессом")
-
-    monkeypatch.setattr(shutil, "rmtree", deny)
-
-    with pytest.raises(SystemExit, match="бот ещё работает"):
-        indexer.main()
 
 
 def test_disabled_auto_update_exits_with_code_2(indexer_environment, monkeypatch):

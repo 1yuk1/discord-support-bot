@@ -256,6 +256,8 @@ file = "data/incidents.md"
 
 [knowledge]
 collection_name = {quote(env("CHROMA_COLLECTION_NAME", "sinussmp_support"))}
+distance_threshold = {number("CHROMA_DISTANCE_THRESHOLD", 0.40)}
+hybrid_search = {boolean("ENABLE_HYBRID_SEARCH", True)}
 strict_embedding_check = {boolean("STRICT_EMBEDDING_CHECK", True)}
 
 [developer_logs]

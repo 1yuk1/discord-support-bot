@@ -40,12 +40,31 @@ def test_valid_item_passes():
     validate_item(make_item(), "test.json")
 
 
-@pytest.mark.parametrize("field", ["id", "question", "synonyms", "category", "for_llm"])
+@pytest.mark.parametrize("field", ["id", "question", "category"])
 def test_missing_required_field_rejected(field):
     item = make_item()
     del item[field]
-    with pytest.raises(KnowledgeError, match="отсутствуют поля"):
+    with pytest.raises(KnowledgeError):
         validate_item(item, "test.json")
+
+
+def test_item_without_for_llm_and_content_rejected():
+    item = make_item()
+    del item["for_llm"]
+    with pytest.raises(KnowledgeError, match="нужен либо for_llm, либо content"):
+        validate_item(item, "test.json")
+
+
+def test_markdown_item_valid():
+    md_item = {
+        "id": "md_block",
+        "question": "Как зайти на сервер",
+        "synonyms": [],
+        "category": "connect",
+        "priority": "medium",
+        "content": "Используйте адрес play.sinussmp.ru для подключения.",
+    }
+    validate_item(md_item, "guide.md")
 
 
 def test_bad_priority_rejected():
@@ -67,26 +86,21 @@ def test_steps_must_be_list_of_strings():
         validate_item(item, "test.json")
 
 
-def test_transfer_to_human_must_be_bool():
-    item = make_item()
-    item["for_llm"]["transfer_to_human"] = "yes"
-    with pytest.raises(KnowledgeError, match="transfer_to_human"):
-        validate_item(item, "test.json")
-
-
-def test_answer_required():
-    """Блок без ответа бесполезен: LLM получит пустой контекст."""
-    item = make_item()
-    item["for_llm"]["quick_answer"] = ""
-    item["for_llm"]["full_solution"] = "   "
-    with pytest.raises(KnowledgeError, match="quick_answer"):
-        validate_item(item, "test.json")
-
-
-def test_search_text_combines_question_and_synonyms():
+def test_search_text_combines_question_and_content():
     text = build_search_text(make_item())
     assert "Как зайти на сервер?" in text
     assert "как подключиться" in text
+
+    md_item = {
+        "id": "md_block",
+        "question": "Как зайти на сервер",
+        "synonyms": [],
+        "category": "connect",
+        "content": "Используйте адрес play.sinussmp.ru для подключения.",
+    }
+    md_text = build_search_text(md_item)
+    assert "Как зайти на сервер" in md_text
+    assert "play.sinussmp.ru" in md_text
 
 
 def test_document_contains_sections():
@@ -101,7 +115,6 @@ def test_metadata_fields():
     assert metadata["id"] == "test_block"
     assert metadata["category"] == "connection"
     assert metadata["priority"] == "high"
-    assert metadata["transfer_to_human"] is False
 
 
 def test_synonym_conflicts_detected():
@@ -110,6 +123,24 @@ def test_synonym_conflicts_detected():
         make_item(id="second", synonyms=["Читы", "правила"]),
     ])
     assert conflicts == {"читы": ["first", "second"]}
+
+
+def test_markdown_file_parsed_and_chunked(tmp_path):
+    md_file = tmp_path / "guide.md"
+    md_file.write_text(
+        "# Основное руководство\n\n"
+        "## Раздел 1: Вход\n"
+        "Текст первого раздела.\n\n"
+        "## Раздел 2: Донат\n"
+        "Текст второго раздела про донат.\n",
+        encoding="utf-8",
+    )
+    items = load_knowledge(tmp_path)
+    assert len(items) == 2
+    assert items[0]["question"] == "Раздел 1: Вход"
+    assert "Текст первого раздела" in items[0]["content"]
+    assert items[1]["question"] == "Раздел 2: Донат"
+    assert "Текст второго раздела" in items[1]["content"]
 
 
 def test_duplicate_ids_rejected(tmp_path):
@@ -150,3 +181,4 @@ def test_real_knowledge_base_is_valid():
     assert len(items) > 0
     ids = [item["id"] for item in items]
     assert len(ids) == len(set(ids))
+

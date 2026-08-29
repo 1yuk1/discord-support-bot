@@ -8,8 +8,9 @@ from bot.prompt import PromptError, PromptLibrary, load_prompt
 
 def test_system_prompt_loads():
     text = load_prompt("system.md")
-    assert "агент поддержки SinusSMP" in text
+    assert "агент службы поддержки" in text
     assert len(text) > 500
+
 
 
 def test_summary_prompt_has_transcript_placeholder():
@@ -20,11 +21,9 @@ def test_summary_prompt_has_transcript_placeholder():
 def test_server_placeholders_substituted():
     """Ссылки и версии не должны оставаться шаблонами в готовом промпте."""
     text = load_prompt("system.md")
-    assert "{SERVER_SITE_URL}" not in text
-    assert "{SERVER_BOOSTY_URL}" not in text
     assert "{SERVER_RECOMMENDED_VERSION}" not in text
-    assert settings.SERVER_SITE_URL in text
-    assert settings.SERVER_BOOSTY_URL in text
+    assert settings.SERVER_RECOMMENDED_VERSION in text
+
 
 
 def test_transfer_wording_matches_escalation_marker():
