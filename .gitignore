@@ -22,6 +22,11 @@ data/
 .vscode/
 .idea/
 
+# Local Notes
+*НЕ ГИТ ПУШИТЬ*
+*.tmp
+
 # OS
 .DS_Store
 Thumbs.db
+

@@ -33,18 +33,10 @@ def _create_bot() -> commands.Bot:
     if not settings.USE_PROXY:
         return commands.Bot(**kwargs)
 
-    import aiohttp
-
-    if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
-        kwargs["proxy_auth"] = aiohttp.BasicAuth(
-            settings.PROXY_USERNAME, settings.PROXY_PASSWORD
-        )
-        # discord.py принимает credentials отдельно от URL.
-        kwargs["proxy"] = f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}"
-    else:
-        kwargs["proxy"] = build_proxy_url()
-
-    logger.info("Discord через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+    active_proxy = build_proxy_url()
+    kwargs["proxy"] = active_proxy
+    safe_proxy = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
+    logger.info("Discord подключение через прокси: %s", safe_proxy)
     return commands.Bot(**kwargs)
 
 

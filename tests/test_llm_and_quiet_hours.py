@@ -93,9 +93,9 @@ def test_compose_reminder_max_tokens_and_fallback():
 
     text = agent.compose_reminder("транскрипт")
     assert text == "Короткое напоминание"
-    # Проверяем max_tokens=160
+    # Проверяем max_tokens=512
     call_kwargs = client_mock.chat.completions.create.call_args[1]
-    assert call_kwargs["max_tokens"] == 160
+    assert call_kwargs["max_tokens"] == 512
 
 
 def test_quiet_hours_check():

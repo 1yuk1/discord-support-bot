@@ -3,7 +3,11 @@
 import base64
 import random
 import time
-from dataclasses import dataclass
+import base64
+from dataclasses import dataclass, field
+import mimetypes
+import random
+import time
 
 import httpx
 
@@ -12,6 +16,7 @@ from bot.escalation import TRANSFER_ANSWER
 from bot.filters import IMAGE_ONLY_PLACEHOLDER, is_short_clarification
 from bot.logging_setup import log_exception, logger
 from bot.prompt import prompts
+from bot.proxy import proxy_pool
 from bot.rag import KnowledgeIndex
 
 # Тексты ошибок для игрока. Маркер ⚠️ используется вызывающим кодом, чтобы
@@ -28,7 +33,13 @@ IMAGE_LOAD_FAILED = (
 
 
 def build_proxy_url() -> str:
-    """HTTP-прокси с учётом необязательной авторизации."""
+    """HTTP-прокси с учётом пула или параметров одиночного прокси."""
+    try:
+        active = proxy_pool.get_next_proxy()
+        if active:
+            return active
+    except Exception:
+        pass
     if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
         return (
             f"http://{settings.PROXY_USERNAME}:{settings.PROXY_PASSWORD}"
@@ -65,6 +76,31 @@ class LlmProvider:
     model_registry: ModelRegistry
     circuit_open_until: float = 0.0
     failure_count: int = 0
+    # Настройки для динамического пересоздания клиента при смене прокси
+    api_key: str = ""
+    api_url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    use_proxy: bool = False
+    timeout_seconds: float = 90.0
+    current_proxy: str | None = None
+
+    def get_client(self, force_refresh_proxy: bool = False):
+        """Возвращает клиент, обновляя прокси при необходимости."""
+        if not self.use_proxy or not self.api_key:
+            return self.client
+
+        active_proxy = proxy_pool.get_next_proxy()
+        if force_refresh_proxy or self.current_proxy != active_proxy:
+            self.current_proxy = active_proxy
+            self.client = _create_openai_client(
+                self.api_key,
+                self.api_url,
+                self.headers,
+                use_proxy=bool(active_proxy),
+                timeout_seconds=self.timeout_seconds,
+                proxy_url=active_proxy,
+            )
+        return self.client
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -88,11 +124,20 @@ def _is_retryable_error(exc: Exception) -> bool:
     retryable_patterns = (
         "timeout", "timed out", "429", "rate limit", "rate_limit",
         "500", "502", "503", "504", "server error", "internal error",
-        "connection", "network", "pool", "econnreset", "socket", "closed",
+        "connection", "network", "pool", "econnreset", "socket", "closed", "proxy",
     )
     return any(p in text for p in retryable_patterns) or isinstance(
         exc, (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError)
     )
+
+
+def _is_proxy_or_network_error(exc: Exception) -> bool:
+    """Определяет, связан ли сбой с сетевым транспортом или прокси."""
+    if isinstance(exc, (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout, httpx.NetworkError)):
+        return True
+    text = str(exc).lower()
+    patterns = ("proxy", "connect", "connection", "socket", "econnreset", "timed out", "timeout", "refused")
+    return any(p in text for p in patterns)
 
 
 def _create_openai_client(
@@ -101,11 +146,11 @@ def _create_openai_client(
     headers: dict[str, str],
     use_proxy: bool,
     timeout_seconds: float,
+    proxy_url: str | None = None,
 ):
     """Создаёт OpenAI-совместимый клиент с тонкой настройкой таймаутов (connect/read/write/pool)."""
     from openai import OpenAI
 
-    # Разделение общего таймаута: connect=10s, pool=5s, read/write из остатка
     connect_timeout = min(10.0, max(2.0, timeout_seconds * 0.2))
     pool_timeout = min(5.0, max(2.0, timeout_seconds * 0.1))
     read_timeout = max(timeout_seconds, 5.0)
@@ -119,22 +164,17 @@ def _create_openai_client(
         pool=pool_timeout,
     )
 
-    if use_proxy:
+    resolved_proxy = proxy_url if proxy_url is not None else (build_proxy_url() if use_proxy else None)
+    if use_proxy and resolved_proxy:
         http_client = httpx.Client(
-            transport=httpx.HTTPTransport(proxy=build_proxy_url()),
+            transport=httpx.HTTPTransport(proxy=resolved_proxy),
             timeout=httpx_timeout,
         )
-        return OpenAI(
-            api_key=api_key,
-            base_url=api_url,
-            default_headers=headers,
-            http_client=http_client,
-            max_retries=0,
+    else:
+        http_client = httpx.Client(
+            timeout=httpx_timeout,
         )
 
-    http_client = httpx.Client(
-        timeout=httpx_timeout,
-    )
     return OpenAI(
         api_key=api_key,
         base_url=api_url,
@@ -166,6 +206,7 @@ def create_providers() -> list[LlmProvider]:
     if settings.OPENROUTER_APP_NAME:
         headers["X-Title"] = settings.OPENROUTER_APP_NAME
 
+    openrouter_proxy = proxy_pool.get_next_proxy() if settings.USE_PROXY else None
     providers = [
         LlmProvider(
             name="openrouter",
@@ -175,15 +216,23 @@ def create_providers() -> list[LlmProvider]:
                 headers,
                 settings.USE_PROXY,
                 timeout_seconds,
+                proxy_url=openrouter_proxy,
             ),
             model_registry=models,
+            api_key=settings.OPENROUTER_API_KEY,
+            api_url=settings.OPENROUTER_API_URL,
+            headers=headers,
+            use_proxy=settings.USE_PROXY,
+            timeout_seconds=timeout_seconds,
+            current_proxy=openrouter_proxy,
         )
     ]
     logger.info("AI провайдер: OpenRouter | модель=%s", settings.OPENROUTER_MODEL)
     if settings.USE_PROXY:
-        logger.info("OpenRouter через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+        logger.info("OpenRouter прокси пул: %s", proxy_pool.get_status())
 
     if settings.FALLBACK_AI_ENABLED:
+        fallback_proxy = proxy_pool.get_next_proxy() if settings.FALLBACK_AI_USE_PROXY else None
         providers.append(
             LlmProvider(
                 name="fallback",
@@ -193,13 +242,20 @@ def create_providers() -> list[LlmProvider]:
                     {},
                     settings.FALLBACK_AI_USE_PROXY,
                     timeout_seconds,
+                    proxy_url=fallback_proxy,
                 ),
                 model_registry=fallback_models,
+                api_key=settings.FALLBACK_AI_API_KEY,
+                api_url=settings.FALLBACK_AI_API_URL,
+                headers={},
+                use_proxy=settings.FALLBACK_AI_USE_PROXY,
+                timeout_seconds=timeout_seconds,
+                current_proxy=fallback_proxy,
             )
         )
         logger.info("AI резервный провайдер | модель=%s", settings.FALLBACK_AI_MODEL)
         if settings.FALLBACK_AI_USE_PROXY:
-            logger.info("Резервный AI-провайдер через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+            logger.info("Резервный AI-провайдер прокси пул: %s", proxy_pool.get_status())
 
     return providers
 
@@ -215,36 +271,46 @@ def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
     Слишком большие файлы пропускаются: они бесполезно расходуют токены и
     могут упереться в лимит запроса OpenRouter.
     """
-    proxies = build_proxy_url() if settings.USE_PROXY else None
     content_parts: list[dict] = []
 
     for url in image_urls:
-        try:
-            with httpx.Client(
-                timeout=settings.IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
-                follow_redirects=True,
-                proxy=proxies,
-            ) as client:
-                response = client.get(url)
-                response.raise_for_status()
+        max_attempts = 2 if settings.USE_PROXY and not proxy_pool.is_empty else 1
 
-            if len(response.content) > settings.IMAGE_MAX_BYTES:
-                logger.warning(
-                    "Скриншот пропущен: %s байт больше лимита %s | url=%s",
-                    len(response.content),
-                    settings.IMAGE_MAX_BYTES,
-                    url[:120],
-                )
-                continue
+        for attempt in range(max_attempts):
+            proxy_url = proxy_pool.get_next_proxy() if settings.USE_PROXY else None
+            try:
+                with httpx.Client(
+                    timeout=settings.IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
+                    follow_redirects=True,
+                    proxy=proxy_url,
+                ) as client:
+                    response = client.get(url)
+                    response.raise_for_status()
 
-            mime = (response.headers.get("content-type") or "image/png").split(";")[0].strip()
-            encoded = base64.b64encode(response.content).decode()
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{encoded}"},
-            })
-        except Exception as exc:
-            log_exception("Не удалось скачать изображение", exc, url=url[:200])
+                if proxy_url:
+                    proxy_pool.report_success(proxy_url)
+
+                if len(response.content) > settings.IMAGE_MAX_BYTES:
+                    logger.warning(
+                        "Скриншот пропущен: %s байт больше лимита %s | url=%s",
+                        len(response.content),
+                        settings.IMAGE_MAX_BYTES,
+                        url[:120],
+                    )
+                    break
+
+                mime = (response.headers.get("content-type") or "image/png").split(";")[0].strip()
+                encoded = base64.b64encode(response.content).decode()
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{encoded}"},
+                })
+                break
+            except Exception as exc:
+                if proxy_url:
+                    proxy_pool.report_failure(proxy_url, exc)
+                if attempt == max_attempts - 1:
+                    log_exception("Не удалось скачать изображение", exc, url=url[:200])
 
     return content_parts
 
@@ -258,6 +324,9 @@ def _classify_error(exc: Exception) -> str:
     if "connect" in text or "network" in text:
         return ERROR_CONNECTION
     return ERROR_GENERIC
+
+
+from bot.metrics import metrics
 
 
 class SupportAgent:
@@ -276,7 +345,7 @@ class SupportAgent:
         self._client = self._providers[0].client
         self._index = index
 
-    def _complete(self, messages: list[dict], temperature: float, max_tokens: int):
+    def _complete(self, messages: list[dict], temperature: float, max_tokens: int, task: str = "general"):
         """Запрашивает провайдеров по очереди (OpenRouter -> Fallback) с retry, backoff и circuit breaker."""
         last_error: Exception | None = None
         now = time.time()
@@ -294,10 +363,11 @@ class SupportAgent:
             model = provider.model_registry.get()
             max_attempts = 2  # до 2 попыток на провайдер для временных сбоев
             base_backoff = 0.5
+            client = provider.get_client() if hasattr(provider, "get_client") else provider.client
 
             for attempt in range(1, max_attempts + 1):
                 try:
-                    response = provider.client.chat.completions.create(
+                    response = client.chat.completions.create(
                         model=model,
                         messages=messages,
                         temperature=temperature,
@@ -306,17 +376,35 @@ class SupportAgent:
                     answer = response.choices[0].message.content or ""
                     if not answer.strip():
                         raise ValueError("Провайдер вернул пустой ответ")
-                    
+
+                    # Фиксируем успех прокси
+                    if getattr(provider, "current_proxy", None):
+                        proxy_pool.report_success(provider.current_proxy)
+
+                    # Учёт расхода токенов
+                    usage = getattr(response, "usage", None)
+                    p_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
+                    c_tok = getattr(usage, "completion_tokens", 0) if usage else 0
+                    t_tok = getattr(usage, "total_tokens", 0) if usage else 0
+                    if p_tok or c_tok or t_tok:
+                        metrics.record_usage(provider.name, model, task, p_tok, c_tok, t_tok)
+
                     # Успех — сбрасываем счетчик ошибок
                     provider.failure_count = 0
                     provider.circuit_open_until = 0.0
                     return response, provider
                 except Exception as exc:
                     last_error = exc
-                    
+
+                    # Если сбой связан с прокси или сетью, отправляем текущий прокси в кулдаун и переключаем
+                    if _is_proxy_or_network_error(exc) and getattr(provider, "current_proxy", None):
+                        proxy_pool.report_failure(provider.current_proxy, exc)
+                        if hasattr(provider, "get_client"):
+                            client = provider.get_client(force_refresh_proxy=True)
+
                     # Проверяем, стоит ли делать retry
                     is_retryable = _is_retryable_error(exc)
-                    
+
                     if not is_retryable:
                         logger.warning(
                             "Неповторяемая ошибка AI-провайдера (auth/config/bad_request) | provider=%s | model=%s | error=%s",
@@ -434,7 +522,7 @@ class SupportAgent:
 
         try:
             response, provider = self._complete(
-                messages, settings.AI_TEMPERATURE, settings.AI_MAX_TOKENS
+                messages, settings.AI_TEMPERATURE, settings.AI_MAX_TOKENS, task="reply"
             )
             answer = response.choices[0].message.content or ""
             finish_reason = response.choices[0].finish_reason
@@ -448,10 +536,13 @@ class SupportAgent:
                     answer[:200].replace("\n", " "),
                 )
             
+            usage = getattr(response, "usage", None)
+            tokens_str = f" | tokens={getattr(usage, 'total_tokens', '?')}" if usage else ""
             logger.info(
-                "Ответ AI получен | provider=%s | model=%s | finish_reason=%s | preview=%s",
+                "Ответ AI получен | provider=%s | model=%s%s | finish_reason=%s | preview=%s",
                 provider.name,
                 provider.model_registry.get(),
+                tokens_str,
                 finish_reason,
                 answer[:200].replace("\n", " "),
             )
@@ -484,7 +575,8 @@ class SupportAgent:
                 {"role": "user", "content": prompt},
             ],
             0.5,
-            160,  # Для напоминаний max_tokens=160
+            512,  # Для напоминаний max_tokens=512 (с запасом для reasoning-моделей)
+            task="reminder",
         )
         answer = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason
@@ -516,6 +608,7 @@ class SupportAgent:
             ],
             0.1,
             1024,
+            task="summary",
         )
         answer = response.choices[0].message.content or ""
         finish_reason = response.choices[0].finish_reason

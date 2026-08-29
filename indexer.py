@@ -32,7 +32,8 @@ if reconfigure:
 
 
 def index_knowledge(knowledge_base: list[dict], embedder, collection) -> None:
-    """Считает эмбеддинги и загружает блоки в коллекцию."""
+    """Считает эмбеддинги и загружает блоки в коллекцию через upsert."""
+    current_ids = [item["id"] for item in knowledge_base]
     search_texts = [
         format_embedding_text(build_search_text(item), MODE_PASSAGE)
         for item in knowledge_base
@@ -44,8 +45,19 @@ def index_knowledge(knowledge_base: list[dict], embedder, collection) -> None:
         normalize_embeddings=True,
     ).tolist()
 
-    collection.add(
-        ids=[item["id"] for item in knowledge_base],
+    # Удаляем устаревшие ID, которых больше нет в файлах базы знаний
+    try:
+        existing = collection.get(include=[])
+        existing_ids = set(existing.get("ids") or [])
+        obsolete_ids = list(existing_ids - set(current_ids))
+        if obsolete_ids:
+            collection.delete(ids=obsolete_ids)
+            print(f"Удалено устаревших блоков: {len(obsolete_ids)}")
+    except Exception:
+        pass
+
+    collection.upsert(
+        ids=current_ids,
         embeddings=embeddings,
         documents=[build_document(item) for item in knowledge_base],
         metadatas=[build_metadata(item) for item in knowledge_base],
@@ -77,11 +89,9 @@ def main() -> None:
             "Автообновление ChromaDB отключено ([paths].auto_update_chroma_db = false).\n"
             "База данных не изменена."
         )
-        # Ненулевой код: entrypoint.sh не должен записывать подпись индекса,
-        # иначе следующий старт решит, что база актуальна, и бот упадёт.
         raise SystemExit(2)
 
-    print("Загрузка базы знаний из JSON...")
+    print("Загрузка базы знаний (.md и .json)...")
     try:
         knowledge_base = load_knowledge()
     except KnowledgeError as exc:
@@ -91,27 +101,16 @@ def main() -> None:
         raise SystemExit("База знаний пуста")
 
     db_path = Path(settings.DB_PATH)
-    if db_path.exists():
-        print(f"Удаление старой базы: {db_path}")
-        try:
-            shutil.rmtree(db_path)
-        except OSError as exc:
-            raise SystemExit(
-                f"Не удалось удалить старую базу {db_path}: {exc}\n"
-                "   Скорее всего, бот ещё работает и держит файлы открытыми. "
-                "Остановите бота и повторите."
-            ) from exc
 
     print(f"Загрузка модели эмбеддингов: {settings.EMBEDDING_MODEL}")
     embedder = load_embedder()
 
     import chromadb
 
-    print(f"Создание коллекции '{settings.CHROMA_COLLECTION_NAME}'...")
+    print(f"Подключение к коллекции '{settings.CHROMA_COLLECTION_NAME}'...")
     client = chromadb.PersistentClient(path=str(db_path))
-    # Отпечаток модели в метаданных: бот при старте сверяет его с текущей
-    # моделью и не работает с несовместимыми векторами.
-    collection = client.create_collection(
+    
+    collection = client.get_or_create_collection(
         settings.CHROMA_COLLECTION_NAME,
         metadata={
             "hnsw:space": settings.CHROMA_DISTANCE_METRIC,
@@ -127,3 +126,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

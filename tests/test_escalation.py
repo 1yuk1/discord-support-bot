@@ -66,15 +66,32 @@ def test_explicit_request_escalates(message):
 
 
 def test_llm_marker_is_narrow():
-    """Маркер в ответе LLM должен быть узким, иначе ложные эскалации."""
+    """Маркер в ответе LLM должен срабатывать на фразы передачи и тег."""
     assert is_llm_human_transfer(
         "Я передам ваш тикет старшему специалисту. Пожалуйста, ожидайте."
     )
+    assert is_llm_human_transfer(
+        "I will transfer your ticket to a senior specialist. [TRANSFER_TO_HUMAN]"
+    )
+    assert is_llm_human_transfer("[TRANSFER_TO_HUMAN]")
     assert not is_llm_human_transfer("Если проблема останется, можно обратиться к специалисту.")
     assert not is_llm_human_transfer("Передам информацию в ответе ниже.")
+
+
+def test_strip_transfer_tag():
+    from bot.escalation import strip_transfer_tag
+
+    raw = "Ваш вопрос принят. [TRANSFER_TO_HUMAN]"
+    cleaned = strip_transfer_tag(raw)
+    assert cleaned == "Ваш вопрос принят."
+    assert "[TRANSFER_TO_HUMAN]" not in cleaned
+
+    english_raw = "Please wait a moment. [TRANSFER_TO_HUMAN]"
+    assert strip_transfer_tag(english_raw) == "Please wait a moment."
 
 
 def test_empty_input_is_safe():
     for check in (is_user_human_transfer, is_llm_human_transfer, should_force_human_transfer):
         assert not check("")
         assert not check(None)
+

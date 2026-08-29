@@ -135,6 +135,7 @@ def test_search_returns_documents(chroma_db, monkeypatch):
     index = KnowledgeIndex(collection, FakeEmbedder())
 
     monkeypatch.setattr(settings, "SEARCH_TOP_K", 2)
+    monkeypatch.setattr(settings, "CHROMA_DISTANCE_THRESHOLD", 2.0)
     context = index.search("Как купить донат?")
 
     assert "## Проблема" in context
@@ -153,9 +154,11 @@ def test_search_deduplicates_across_variants(chroma_db, monkeypatch):
     index = KnowledgeIndex(collection, FakeEmbedder())
 
     monkeypatch.setattr(settings, "SEARCH_TOP_K", 5)
+    monkeypatch.setattr(settings, "CHROMA_DISTANCE_THRESHOLD", 2.0)
     # "crjkmr" распознаётся как неверная раскладка, поэтому вариантов два.
     context = index.search("crjkmr")
     assert context.count("## Проблема") == 1
+
 
 
 def test_search_returns_empty_for_empty_collection(chroma_db, monkeypatch):

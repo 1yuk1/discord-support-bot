@@ -185,6 +185,39 @@ def test_ignores_bots_and_system():
     assert run(mention_moderation.handle_mention_moderation(msg_sys)) is False
 
 
+def test_admin_and_staff_bypass_mention_moderation(monkeypatch):
+    # Настраиваем ID администраторов и персонала
+    monkeypatch.setattr(settings, "ADMIN_USER_IDS", [1001])
+    monkeypatch.setattr(settings, "ADMIN_ROLE_IDS", [2001])
+    monkeypatch.setattr(settings, "REMINDER_STAFF_ROLE_IDS", [3001])
+
+    # 1. Админ по user_id пингует защищённого админа 100
+    admin_user = FakeUser(1001, "SuperAdmin")
+    ch1 = FakeChannel()
+    msg1 = FakeMessage(author=admin_user, mentions=[FakeUser(100)], channel=ch1)
+    assert run(mention_moderation.handle_mention_moderation(msg1)) is False
+    assert admin_user.timed_out_duration is None
+    assert len(ch1.sent) == 0
+
+    # 2. Админ по правам Discord Administrator пингует защищённую роль 300
+    discord_admin = FakeUser(5555, "DiscordAdmin")
+    discord_admin.guild_permissions = SimpleNamespace(administrator=True)
+    ch2 = FakeChannel()
+    msg2 = FakeMessage(author=discord_admin, role_mentions=[FakeRole(300)], channel=ch2)
+    assert run(mention_moderation.handle_mention_moderation(msg2)) is False
+    assert discord_admin.timed_out_duration is None
+    assert len(ch2.sent) == 0
+
+    # 3. Саппорт (роль персонала) пингует защищённого админа
+    staff_user = FakeUser(7777, "Helper")
+    staff_user.roles = [FakeRole(3001)]
+    ch3 = FakeChannel()
+    msg3 = FakeMessage(author=staff_user, mentions=[FakeUser(100)], channel=ch3)
+    assert run(mention_moderation.handle_mention_moderation(msg3)) is False
+    assert staff_user.timed_out_duration is None
+    assert len(ch3.sent) == 0
+
+
 def test_escalation_persists_across_restart():
     guild_id = 123
     user_id = 555

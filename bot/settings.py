@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tomllib
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
@@ -174,17 +175,23 @@ def _as_path(raw: str, default: str) -> str:
     return str(candidate if candidate.is_absolute() else BASE_DIR / candidate)
 
 
-# ── Discord ──────────────────────────────────────────────────────────────────
+# ── Discord & Permissions ───────────────────────────────────────────────────
 _discord_cfg = _section("discord")
+_admins_cfg = _section("admins")
 DISCORD_TOKEN: str = _require("discord", "token")
 COMMAND_PREFIX: str = _discord_cfg.get("command_prefix", "!")
 TICKET_CATEGORY_IDS: list[int] = _parse_id_list(
     _discord_cfg.get("ticket_category_ids", _discord_cfg.get("ticket_category_id"))
 )
+TICKET_EXCLUDED_CATEGORY_IDS: list[int] = _parse_id_list(
+    _discord_cfg.get("excluded_category_ids", _discord_cfg.get("ticket_excluded_category_ids"))
+)
 BOT_ROLE_IDS: list[int] = _parse_id_list(
     _discord_cfg.get("bot_role_ids", _discord_cfg.get("bot_role_id"))
 )
 IGNORED_ROLE_IDS: list[int] = _parse_id_list(_discord_cfg.get("ignored_role_ids"))
+ADMIN_ROLE_IDS: list[int] = _parse_id_list(_admins_cfg.get("role_ids", _discord_cfg.get("admin_role_ids")))
+ADMIN_USER_IDS: list[int] = _parse_id_list(_admins_cfg.get("user_ids", _discord_cfg.get("admin_user_ids")))
 BOT_REPLY_FOOTER: str = _discord_cfg.get(
     "reply_footer",
     "Этот бот только обучается, поэтому может неправильно отвечать на вопросы. "
@@ -219,13 +226,24 @@ FALLBACK_AI_MODEL: str = _fallback_cfg.get("model", "")
 FALLBACK_AI_API_URL: str = _fallback_cfg.get("api_url", "")
 FALLBACK_AI_USE_PROXY: bool = bool(_fallback_cfg.get("use_proxy", False))
 
-# ── Proxy ────────────────────────────────────────────────────────────────────
+# ── Proxy & Multi-Proxy Pool ────────────────────────────────────────────────
 _proxy_cfg = _section("proxy")
 USE_PROXY: bool = bool(_proxy_cfg.get("enabled", False))
-PROXY_HOST: str = _proxy_cfg.get("host", "127.0.0.1")
+PROXY_HOST: str = str(_proxy_cfg.get("host", "127.0.0.1")).strip()
 PROXY_PORT: int = int(_proxy_cfg.get("port", 10808))
-PROXY_USERNAME: str = _proxy_cfg.get("username", "")
-PROXY_PASSWORD: str = _proxy_cfg.get("password", "")
+PROXY_USERNAME: str = str(_proxy_cfg.get("username", "")).strip()
+PROXY_PASSWORD: str = str(_proxy_cfg.get("password", "")).strip()
+
+_raw_proxy_urls = _proxy_cfg.get("urls") or _proxy_cfg.get("proxies") or []
+if isinstance(_raw_proxy_urls, str):
+    PROXY_URLS: list[str] = [u.strip() for u in _raw_proxy_urls.replace(";", ",").split(",") if u.strip()]
+elif isinstance(_raw_proxy_urls, (list, tuple)):
+    PROXY_URLS: list[str] = [str(u).strip() for u in _raw_proxy_urls if str(u).strip()]
+else:
+    PROXY_URLS: list[str] = []
+
+PROXY_STRATEGY: str = str(_proxy_cfg.get("strategy", "failover")).strip().lower()
+PROXY_COOLDOWN_SECONDS: int = int(_proxy_cfg.get("cooldown_seconds", 60))
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 _paths_cfg = _section("paths")
@@ -252,6 +270,8 @@ INCIDENTS_FILE: str = _as_path(_incidents_cfg.get("file"), "data/incidents.md")
 _kb_cfg = _section("knowledge")
 CHROMA_COLLECTION_NAME: str = _kb_cfg.get("collection_name", "sinussmp_support")
 CHROMA_DISTANCE_METRIC: str = _kb_cfg.get("distance_metric", "cosine")
+CHROMA_DISTANCE_THRESHOLD: float = float(_kb_cfg.get("distance_threshold", 0.40))
+ENABLE_HYBRID_SEARCH: bool = bool(_kb_cfg.get("hybrid_search", True))
 EMBEDDING_BATCH_SIZE: int = int(_kb_cfg.get("batch_size", 32))
 # Совместимость векторов: бот отказывается работать с базой, собранной другой
 # моделью. Без этой проверки поиск тихо возвращает мусор.
@@ -338,6 +358,136 @@ REMINDER_PHRASES: list[str] = [
     if str(phrase).strip()
 ] or _DEFAULT_REMINDER_PHRASES
 
+# ── Multi-server & Category configurations ──────────────────────────────────
+@dataclass
+class GuildConfig:
+    """Конфигурация бота для конкретного сервера (гильдии) Discord."""
+
+    guild_id: int | None = None
+    name: str = ""
+
+    # Роли и права (Admin / Staff / Bot / Ping)
+    admin_role_ids: list[int] = field(default_factory=list)
+    admin_user_ids: list[int] = field(default_factory=list)
+    staff_role_ids: list[int] = field(default_factory=list)
+    bot_role_ids: list[int] = field(default_factory=list)
+    ping_role_ids: list[int] = field(default_factory=list)
+
+    # Категории каналов (Whitelist / Blacklist)
+    ticket_category_ids: list[int] = field(default_factory=list)  # Whitelist: нигде кроме этих
+    excluded_category_ids: list[int] = field(default_factory=list)  # Blacklist: везде кроме этих
+
+    # Модерация упоминаний
+    mention_timeout_enabled: bool = True
+    protected_user_ids: list[int] = field(default_factory=list)
+    protected_role_ids: list[int] = field(default_factory=list)
+    mention_timeout_durations: list[timedelta] = field(default_factory=list)
+    mention_escalation_reset_days: int = 30
+    mention_timeout_reason: str = "Запрещённый пинг участника или роли поддержки"
+
+    # Напоминания
+    reminders_enabled: bool = True
+    reminder_idle_hours: float = 1.0
+    reminder_repeat_hours: float = 6.0
+    reminder_max_per_day: int = 3
+    reminder_message_mode: str = "llm"
+    reminder_phrases: list[str] = field(default_factory=list)
+    quiet_hours_timezone: str = "Europe/Moscow"
+    quiet_hours_start: str = "23:00"
+    quiet_hours_end: str = "09:00"
+
+
+def _parse_servers_config(raw_cfg: dict) -> dict[int, dict]:
+    """Парсит секции [servers.<guild_id>] или [guilds.<guild_id>]."""
+    servers = raw_cfg.get("servers") or raw_cfg.get("guilds") or {}
+    if not isinstance(servers, dict):
+        return {}
+
+    result = {}
+    for key, val in servers.items():
+        if not isinstance(val, dict):
+            continue
+        try:
+            guild_id = int(str(key).strip())
+            result[guild_id] = val
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+SERVERS_CONFIG: dict[int, dict] = _parse_servers_config(_cfg)
+
+
+def get_guild_config(guild_id: int | None = None) -> GuildConfig:
+    """Возвращает настройки для конкретного сервера (с наследованием от глобальных)."""
+    server_override = SERVERS_CONFIG.get(guild_id, {}) if guild_id is not None else {}
+
+    def pick(key: str, fallback):
+        val = server_override.get(key)
+        return val if val is not None else fallback
+
+    admin_roles = _parse_id_list(pick("admin_role_ids", ADMIN_ROLE_IDS))
+    admin_users = _parse_id_list(pick("admin_user_ids", ADMIN_USER_IDS))
+
+    # Персонал: если не указан, берет staff_role_ids или ignored_role_ids
+    staff_roles = _parse_id_list(pick("staff_role_ids", REMINDER_STAFF_ROLE_IDS or IGNORED_ROLE_IDS))
+    if not staff_roles:
+        staff_roles = list(IGNORED_ROLE_IDS)
+
+    # Защищенные роли и пользователи для модерации упоминаний:
+    # По умолчанию автоматически защищает персонал и админов!
+    protected_roles = _parse_id_list(pick("protected_role_ids", MENTION_PROTECTED_ROLE_IDS))
+    if not protected_roles and (staff_roles or admin_roles):
+        protected_roles = list(set(staff_roles + admin_roles))
+
+    protected_users = _parse_id_list(pick("protected_user_ids", MENTION_PROTECTED_USER_IDS))
+    if not protected_users and admin_users:
+        protected_users = list(admin_users)
+
+    # Категории
+    whitelist_cats = _parse_id_list(pick("ticket_category_ids", TICKET_CATEGORY_IDS))
+    blacklist_cats = _parse_id_list(
+        pick("excluded_category_ids", TICKET_EXCLUDED_CATEGORY_IDS or REMINDER_EXCLUDED_CATEGORY_IDS)
+    )
+
+    # Длительности таймаутов
+    raw_durations = pick("mention_timeout_durations", None)
+    if raw_durations is not None:
+        try:
+            durations = parse_durations_list(raw_durations) or list(MENTION_TIMEOUT_DURATIONS)
+        except Exception:
+            durations = list(MENTION_TIMEOUT_DURATIONS)
+    else:
+        durations = list(MENTION_TIMEOUT_DURATIONS)
+
+    return GuildConfig(
+        guild_id=guild_id,
+        name=str(pick("name", "")),
+        admin_role_ids=admin_roles,
+        admin_user_ids=admin_users,
+        staff_role_ids=staff_roles,
+        bot_role_ids=_parse_id_list(pick("bot_role_ids", pick("bot_role_id", BOT_ROLE_IDS))),
+        ping_role_ids=_parse_id_list(pick("ping_role_ids", pick("ping_role_id", REMINDER_PING_ROLE_IDS))),
+        ticket_category_ids=whitelist_cats,
+        excluded_category_ids=blacklist_cats,
+        mention_timeout_enabled=bool(pick("mention_timeout_enabled", MENTION_TIMEOUT_ENABLED)),
+        protected_user_ids=protected_users,
+        protected_role_ids=protected_roles,
+        mention_timeout_durations=durations,
+        mention_escalation_reset_days=int(pick("mention_escalation_reset_days", MENTION_ESCALATION_RESET_DAYS)),
+        mention_timeout_reason=str(pick("mention_timeout_reason", MENTION_TIMEOUT_REASON)),
+        reminders_enabled=bool(pick("reminders_enabled", REMINDERS_ENABLED)),
+        reminder_idle_hours=float(pick("reminder_idle_hours", pick("idle_hours", REMINDER_IDLE_HOURS))),
+        reminder_repeat_hours=float(pick("reminder_repeat_hours", pick("repeat_hours", REMINDER_REPEAT_HOURS))),
+        reminder_max_per_day=int(pick("reminder_max_per_day", pick("max_per_day", REMINDER_MAX_PER_DAY))),
+        reminder_message_mode=str(pick("reminder_message_mode", pick("message_mode", REMINDER_MESSAGE_MODE))).lower(),
+        reminder_phrases=pick("reminder_phrases", pick("phrases", REMINDER_PHRASES)) or _DEFAULT_REMINDER_PHRASES,
+        quiet_hours_timezone=str(pick("quiet_hours_timezone", QUIET_HOURS_TIMEZONE)).strip(),
+        quiet_hours_start=str(pick("quiet_hours_start", QUIET_HOURS_START)).strip(),
+        quiet_hours_end=str(pick("quiet_hours_end", QUIET_HOURS_END)).strip(),
+    )
+
+
 # Переопределения по категориям: {category_id: {ключ: значение}}.
 _overrides_raw = _reminders_cfg.get("categories")
 _overrides_raw = _overrides_raw if isinstance(_overrides_raw, dict) else {}
@@ -352,34 +502,33 @@ for _raw_key, _override in _overrides_raw.items():
     REMINDER_CATEGORY_OVERRIDES[_category_id] = _override
 
 
-def reminder_config_for(category_id) -> dict:
-    """Итоговые настройки напоминаний для категории канала.
+def reminder_config_for(category_id, guild_id: int | None = None) -> dict:
+    """Итоговые настройки напоминаний для категории канала с учётом сервера.
 
-    Значения из [reminders.categories.<id>] перекрывают глобальные. Роли
-    персонала по умолчанию берутся из ignored_role_ids: это ровно те роли,
-    чьи сообщения бот и так считает «не игроком».
+    Значения из [reminders.categories.<id>] перекрывают глобальные и серверные.
     """
+    guild_cfg = get_guild_config(guild_id)
     override = REMINDER_CATEGORY_OVERRIDES.get(category_id, {})
 
     def pick(key: str, fallback):
         return override.get(key, fallback) if isinstance(override, dict) else fallback
 
-    staff_roles = _parse_id_list(pick("staff_role_ids", REMINDER_STAFF_ROLE_IDS))
+    staff_roles = _parse_id_list(pick("staff_role_ids", guild_cfg.staff_role_ids))
     if not staff_roles:
-        staff_roles = list(IGNORED_ROLE_IDS)
+        staff_roles = list(guild_cfg.staff_role_ids or IGNORED_ROLE_IDS)
 
     return {
-        "enabled": bool(pick("enabled", REMINDERS_ENABLED)),
+        "enabled": bool(pick("enabled", guild_cfg.reminders_enabled)),
         "staff_role_ids": staff_roles,
-        "ping_role_ids": _parse_id_list(pick("ping_role_ids", REMINDER_PING_ROLE_IDS)),
-        "idle_hours": float(pick("idle_hours", REMINDER_IDLE_HOURS)),
-        "repeat_hours": float(pick("repeat_hours", REMINDER_REPEAT_HOURS)),
-        "max_per_day": int(pick("max_per_day", REMINDER_MAX_PER_DAY)),
-        "message_mode": str(pick("message_mode", REMINDER_MESSAGE_MODE)).lower(),
-        "phrases": pick("phrases", REMINDER_PHRASES) or _DEFAULT_REMINDER_PHRASES,
-        "quiet_hours_timezone": str(pick("quiet_hours_timezone", QUIET_HOURS_TIMEZONE)).strip(),
-        "quiet_hours_start": str(pick("quiet_hours_start", QUIET_HOURS_START)).strip(),
-        "quiet_hours_end": str(pick("quiet_hours_end", QUIET_HOURS_END)).strip(),
+        "ping_role_ids": _parse_id_list(pick("ping_role_ids", guild_cfg.ping_role_ids)),
+        "idle_hours": float(pick("idle_hours", guild_cfg.reminder_idle_hours)),
+        "repeat_hours": float(pick("repeat_hours", guild_cfg.reminder_repeat_hours)),
+        "max_per_day": int(pick("max_per_day", guild_cfg.reminder_max_per_day)),
+        "message_mode": str(pick("message_mode", guild_cfg.reminder_message_mode)).lower(),
+        "phrases": pick("phrases", guild_cfg.reminder_phrases) or _DEFAULT_REMINDER_PHRASES,
+        "quiet_hours_timezone": str(pick("quiet_hours_timezone", guild_cfg.quiet_hours_timezone)).strip(),
+        "quiet_hours_start": str(pick("quiet_hours_start", guild_cfg.quiet_hours_start)).strip(),
+        "quiet_hours_end": str(pick("quiet_hours_end", guild_cfg.quiet_hours_end)).strip(),
     }
 
 
@@ -448,8 +597,11 @@ _HOT_RELOADABLE: tuple[tuple, ...] = (
     ("IMAGE_DOWNLOAD_TIMEOUT_SECONDS", "ai", "image_download_timeout_seconds", int, 30),
 
     ("TICKET_CATEGORY_IDS", "discord", "ticket_category_ids", _parse_id_list, []),
+    ("TICKET_EXCLUDED_CATEGORY_IDS", "discord", "excluded_category_ids", _parse_id_list, []),
     ("BOT_ROLE_IDS", "discord", "bot_role_ids", _parse_id_list, []),
     ("IGNORED_ROLE_IDS", "discord", "ignored_role_ids", _parse_id_list, []),
+    ("ADMIN_ROLE_IDS", "admins", "role_ids", _parse_id_list, []),
+    ("ADMIN_USER_IDS", "admins", "user_ids", _parse_id_list, []),
     ("BOT_REPLY_FOOTER", "discord", "reply_footer", str, BOT_REPLY_FOOTER),
 
     ("RATE_LIMIT_ENABLED", "rate_limit", "enabled", bool, True),
@@ -490,6 +642,9 @@ _HOT_RELOADABLE: tuple[tuple, ...] = (
     ("MENTION_TIMEOUT_REASON", "mention_timeout", "reason", str, "Запрещённый пинг участника или роли поддержки"),
 
     ("INCIDENTS_ENABLED", "incidents", "enabled", bool, True),
+
+    ("CHROMA_DISTANCE_THRESHOLD", "knowledge", "distance_threshold", float, 0.40),
+    ("ENABLE_HYBRID_SEARCH", "knowledge", "hybrid_search", bool, True),
 
     ("STATE_TTL_SECONDS", "state", "ttl_seconds", int, 7 * 24 * 60 * 60),
 )
@@ -568,6 +723,15 @@ def reload() -> dict[str, tuple]:
             sorted(fresh_overrides),
         )
         module["REMINDER_CATEGORY_OVERRIDES"] = fresh_overrides
+
+    # Мультисерверные настройки [servers.<id>]
+    fresh_servers = _parse_servers_config(merged)
+    if fresh_servers != SERVERS_CONFIG:
+        changes["SERVERS_CONFIG"] = (
+            sorted(SERVERS_CONFIG),
+            sorted(fresh_servers),
+        )
+        module["SERVERS_CONFIG"] = fresh_servers
 
     # Модель меняется через ModelRegistry: она хранит своё значение, поэтому
     # здесь только обновляем эталон из файла.

@@ -59,11 +59,34 @@ def setup_logger() -> logging.Logger:
 logger = setup_logger()
 
 
+def channel_label(channel) -> str:
+    """Форматирует канал для логов: '#ticket-1234 [1526152871538593882]' или 'channel_id'."""
+    if channel is None:
+        return "unknown"
+    if isinstance(channel, (int, str)):
+        return str(channel)
+    name = getattr(channel, "name", None)
+    channel_id = getattr(channel, "id", None)
+    if name and channel_id:
+        return f"#{name} [{channel_id}]"
+    if name:
+        return f"#{name}"
+    if channel_id:
+        return str(channel_id)
+    return str(channel)
+
+
 def log_exception(message: str, exc: BaseException, **context) -> None:
     """Логирует исключение с контекстом и полным traceback."""
     context_text = ""
     if context:
-        context_text = " | " + " | ".join(f"{key}={value}" for key, value in context.items())
+        items = []
+        for key, value in context.items():
+            if key in ("channel", "channel_id") and not isinstance(value, (int, str)):
+                items.append(f"channel={channel_label(value)}")
+            else:
+                items.append(f"{key}={value}")
+        context_text = " | " + " | ".join(items)
     logger.error(
         "%s%s | exception=%s: %s",
         message,

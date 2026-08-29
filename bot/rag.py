@@ -21,23 +21,57 @@ class KnowledgeIndex:
     def collection_name(self) -> str:
         return getattr(self._collection, "name", settings.CHROMA_COLLECTION_NAME)
 
-    def search(self, query: str, top_k: int | None = None) -> str:
+    def _find_keyword_matches(self, query: str, limit: int = 2) -> list[str]:
+        """Ищет документы по точным ключевым словам (команды /cmd, технические термины)."""
+        import re
+        
+        # Выделяем команды вида /ps, /crafts, /mine, /garant, /b, /link, /changepass
+        commands = re.findall(r"/[a-zA-Z0-9_]+", query)
+        matches: list[str] = []
+        seen: set[str] = set()
+
+        for cmd in commands:
+            cmd_lower = cmd.lower()
+            try:
+                # Поиск в Chroma по вхождению точной команды в документ
+                results = self._collection.get(
+                    where_document={"$contains": cmd_lower},
+                    limit=limit,
+                )
+                for doc in (results.get("documents") or []):
+                    if doc and doc not in seen:
+                        seen.add(doc)
+                        matches.append(doc)
+                        logger.info("RAG Гибридный поиск: найдено точное совпадение по '%s'", cmd_lower)
+            except Exception as exc:
+                logger.debug("Ошибка поиска по ключевому слову %s: %s", cmd_lower, exc)
+
+        return matches
+
+    def search(self, query: str, top_k: int | None = None, threshold: float | None = None) -> str:
         """Ищет релевантные блоки и возвращает их как единый контекст.
 
-        Пробует несколько вариантов запроса (на случай неверной раскладки),
-        объединяет результаты и дедуплицирует по содержанию документа,
-        сохраняя порядок: более релевантное идёт первым.
-
-        Пустая строка означает «ничего не найдено» — это нормальный результат.
-        Исключение поднимается только если ни один вариант не выполнился.
+        1. Отсекает документы с расстоянием больше settings.CHROMA_DISTANCE_THRESHOLD (защита от галлюцинаций).
+        2. При settings.ENABLE_HYBRID_SEARCH находит точные совпадения по командам (/ps, /mine и др.).
+        3. Дедуплицирует результаты и возвращает пустую строку, если релевантных блоков не найдено.
         """
         limit = top_k or settings.SEARCH_TOP_K
+        max_dist = threshold if threshold is not None else settings.CHROMA_DISTANCE_THRESHOLD
         variants = query_variants(query)
 
         seen_documents: set[str] = set()
         context_parts: list[str] = []
-        succeeded = 0
 
+        # 1. Гибридный поиск по точным командам
+        if settings.ENABLE_HYBRID_SEARCH:
+            keyword_docs = self._find_keyword_matches(query, limit=limit)
+            for doc in keyword_docs:
+                if doc not in seen_documents:
+                    seen_documents.add(doc)
+                    context_parts.append(doc)
+
+        # 2. Семантический векторный поиск с порогом релевантности
+        succeeded = 0
         for variant in variants:
             try:
                 embedding = self._embedder.encode(
@@ -47,7 +81,7 @@ class KnowledgeIndex:
                 results = self._collection.query(
                     query_embeddings=[embedding],
                     n_results=limit,
-                    include=["documents", "metadatas"],
+                    include=["documents", "metadatas", "distances"],
                 )
             except Exception as exc:
                 log_exception(
@@ -57,15 +91,32 @@ class KnowledgeIndex:
 
             succeeded += 1
             documents = (results.get("documents") or [[]])[0] or []
-            for document in documents:
-                if document and document not in seen_documents:
-                    seen_documents.add(document)
-                    context_parts.append(document)
+            metadatas = (results.get("metadatas") or [[]])[0] or []
+            distances = (results.get("distances") or [[]])[0] or []
 
-        if succeeded == 0:
+            for doc, meta, dist in zip(documents, metadatas, distances):
+                doc_id = (meta or {}).get("id", "unknown") if isinstance(meta, dict) else "unknown"
+                logger.info(
+                    "RAG кандидат | id=%s | distance=%.4f | max_threshold=%.2f",
+                    doc_id,
+                    dist,
+                    max_dist,
+                )
+                # Фильтрация по порогу косинусного расстояния
+                if dist > max_dist:
+                    logger.info("RAG кандидат %s отклонён: distance %.4f > %.2f", doc_id, dist, max_dist)
+                    continue
+
+                if doc and doc not in seen_documents:
+                    seen_documents.add(doc)
+                    context_parts.append(doc)
+
+        if succeeded == 0 and not context_parts:
             raise KnowledgeIndexError("Ни один вариант поиска не выполнился")
 
-        return "\n\n".join(context_parts)
+        # Ограничиваем суммарное число документов лимитом
+        selected = context_parts[:limit]
+        return "\n\n".join(selected)
 
 
 def _verify_embedding_compatibility(collection) -> None:
