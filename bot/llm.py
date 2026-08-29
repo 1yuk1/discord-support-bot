@@ -274,10 +274,11 @@ def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
     content_parts: list[dict] = []
 
     for url in image_urls:
-        max_attempts = 2 if settings.USE_PROXY and not proxy_pool.is_empty else 1
+        use_proxy = settings.USE_PROXY and settings.DISCORD_USE_PROXY
+        max_attempts = 2 if use_proxy and not proxy_pool.is_empty else 1
 
         for attempt in range(max_attempts):
-            proxy_url = proxy_pool.get_next_proxy() if settings.USE_PROXY else None
+            proxy_url = proxy_pool.get_next_proxy() if use_proxy else None
             try:
                 with httpx.Client(
                     timeout=settings.IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
@@ -412,6 +413,15 @@ class SupportAgent:
                             model,
                             exc,
                         )
+                        # Мгновенно отключаем провайдера при фатальных ошибках (401, 403, лимиты, бан IP)
+                        cooldown = getattr(settings, "CIRCUIT_BREAKER_COOLDOWN_SECONDS", 600)
+                        provider.circuit_open_until = time.time() + cooldown
+                        provider.failure_count = getattr(settings, "CIRCUIT_BREAKER_THRESHOLD", 3)
+                        logger.error(
+                            "Circuit Breaker мгновенно отключил %s на %sс из-за фатальной ошибки",
+                            provider.name,
+                            cooldown,
+                        )
                         break
 
                     if attempt < max_attempts:
@@ -429,14 +439,18 @@ class SupportAgent:
                         time.sleep(delay)
 
             # Если все попытки у провайдера провалились
-            provider.failure_count += 1
-            if provider.failure_count >= 3:
-                # Открываем Circuit Breaker на 60 секунд
-                provider.circuit_open_until = time.time() + 60.0
-                logger.error(
-                    "Circuit Breaker сработал для %s (3 сбоя подряд), отключен на 60с",
-                    provider.name,
-                )
+            if is_retryable:
+                provider.failure_count += 1
+                threshold = getattr(settings, "CIRCUIT_BREAKER_THRESHOLD", 3)
+                cooldown = getattr(settings, "CIRCUIT_BREAKER_COOLDOWN_SECONDS", 600)
+                if provider.failure_count >= threshold:
+                    provider.circuit_open_until = time.time() + cooldown
+                    logger.error(
+                        "Circuit Breaker сработал для %s (%s сбоев подряд), отключен на %sс",
+                        provider.name,
+                        provider.failure_count,
+                        cooldown,
+                    )
 
             if position + 1 < len(self._providers):
                 logger.warning(

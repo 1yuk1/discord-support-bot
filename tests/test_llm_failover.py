@@ -73,3 +73,23 @@ def test_reminder_and_summary_use_fallback():
     assert summary_agent.summarize_ticket("история") == "Сводка"
     assert len(reminder_fallback.chat.completions.calls) == 1
     assert len(summary_fallback.chat.completions.calls) == 1
+
+
+def test_fatal_error_instantly_trips_circuit_breaker():
+    # 403 Forbidden / Access denied мгновенно отключает primary провайдер
+    agent, primary, fallback = make_agent(
+        [Exception("403 Forbidden: Access denied by security policy"), "Не должно вызваться"],
+        ["Резервный 1", "Резервный 2"],
+    )
+
+    # 1-й вызов: primary падает с 403, срабатывает мгновенный Circuit Breaker, fallback отвечает
+    ans1 = agent.generate_answer("вопрос 1")
+    assert ans1 == "Резервный 1"
+    assert len(primary.chat.completions.calls) == 1
+
+    # 2-й вызов: primary должен быть пропущен сразу, запрос идет сразу в fallback
+    ans2 = agent.generate_answer("вопрос 2")
+    assert ans2 == "Резервный 2"
+    # Количество вызовов primary не увеличилось, т.к. он в кулдауне
+    assert len(primary.chat.completions.calls) == 1
+    assert len(fallback.chat.completions.calls) == 2

@@ -221,7 +221,9 @@ search_top_k = {integer("SEARCH_TOP_K", 2)}
 request_timeout_seconds = {integer("AI_REQUEST_TIMEOUT_SECONDS", 90)}
 max_concurrent_requests = {integer("AI_MAX_CONCURRENT_REQUESTS", 2)}
 temperature = {number("AI_TEMPERATURE", 0.3)}
-max_tokens = {integer("AI_MAX_TOKENS", 1024)}
+max_tokens = {integer("AI_MAX_TOKENS", 4096)}
+circuit_breaker_cooldown_seconds = {integer("CIRCUIT_BREAKER_COOLDOWN_SECONDS", 600)}
+circuit_breaker_threshold = {integer("CIRCUIT_BREAKER_THRESHOLD", 3)}
 
 [ai.openrouter]
 api_key = {quote(api_key)}
@@ -249,6 +251,7 @@ password = {quote(env("PROXY_PASSWORD"))}
 urls = {str_list("PROXY_URLS", [])}
 strategy = {quote(env("PROXY_STRATEGY", "failover"))}
 cooldown_seconds = {integer("PROXY_COOLDOWN_SECONDS", 60)}
+discord_use_proxy = {boolean("DISCORD_USE_PROXY", False)}
 
 [paths]
 model_cache = "model_cache"

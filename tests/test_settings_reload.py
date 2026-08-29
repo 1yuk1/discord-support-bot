@@ -17,7 +17,7 @@ ignored_role_ids = [999]
 
 [ai]
 temperature = 0.3
-max_tokens = 1024
+max_tokens = 4096
 
 [ai.openrouter]
 api_key = "test-key"
@@ -99,12 +99,12 @@ def test_reload_picks_up_category_overrides(settings_file):
 
 
 def test_reload_reports_only_changed_keys(settings_file):
-    """Дифф должен быть коротким: иначе в ответе каша из всех настроек."""
-    write(settings_file, BASE_CONFIG.replace("max_tokens = 1024", "max_tokens = 2048"))
+    """Показывает только то, что реально изменилось."""
+    write(settings_file, BASE_CONFIG.replace("max_tokens = 4096", "max_tokens = 2048"))
     changes = settings.reload()
 
     assert set(changes) == {"AI_MAX_TOKENS"}
-    assert changes["AI_MAX_TOKENS"] == (1024, 2048)
+    assert changes["AI_MAX_TOKENS"] == (4096, 2048)
 
 
 def test_reload_without_changes_returns_empty(settings_file):

@@ -206,7 +206,9 @@ SEARCH_TOP_K: int = int(_ai_cfg.get("search_top_k", 2))
 AI_REQUEST_TIMEOUT_SECONDS: int = int(_ai_cfg.get("request_timeout_seconds", 90))
 AI_MAX_CONCURRENT_REQUESTS: int = int(_ai_cfg.get("max_concurrent_requests", 2))
 AI_TEMPERATURE: float = float(_ai_cfg.get("temperature", 0.3))
-AI_MAX_TOKENS: int = int(_ai_cfg.get("max_tokens", 1024))
+AI_MAX_TOKENS: int = int(_ai_cfg.get("max_tokens", 4096))
+CIRCUIT_BREAKER_COOLDOWN_SECONDS: int = int(_ai_cfg.get("circuit_breaker_cooldown_seconds", 600))
+CIRCUIT_BREAKER_THRESHOLD: int = int(_ai_cfg.get("circuit_breaker_threshold", 3))
 IMAGE_DOWNLOAD_TIMEOUT_SECONDS: int = int(_ai_cfg.get("image_download_timeout_seconds", 30))
 IMAGE_MAX_BYTES: int = int(_ai_cfg.get("image_max_bytes", 8 * 1024 * 1024))
 
@@ -646,6 +648,10 @@ _HOT_RELOADABLE: tuple[tuple, ...] = (
 
     ("CHROMA_DISTANCE_THRESHOLD", "knowledge", "distance_threshold", float, 0.40),
     ("ENABLE_HYBRID_SEARCH", "knowledge", "hybrid_search", bool, True),
+
+    ("AI_MAX_TOKENS", "ai", "max_tokens", int, 4096),
+    ("CIRCUIT_BREAKER_COOLDOWN_SECONDS", "ai", "circuit_breaker_cooldown_seconds", int, 600),
+    ("CIRCUIT_BREAKER_THRESHOLD", "ai", "circuit_breaker_threshold", int, 3),
 
     ("STATE_TTL_SECONDS", "state", "ttl_seconds", int, 7 * 24 * 60 * 60),
 )
