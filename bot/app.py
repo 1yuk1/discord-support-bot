@@ -39,7 +39,16 @@ def _create_bot() -> commands.Bot:
     if proxy_type in ("socks5", "socks5h", "socks4") or active_proxy.lower().startswith("socks"):
         from aiohttp_socks import ProxyConnector
 
-        kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+        try:
+            kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+
         safe_socks = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
         logger.info("Discord подключение через SOCKS-прокси: %s", safe_socks)
     else:
@@ -292,20 +301,23 @@ def _install_shutdown_handlers(bot: commands.Bot) -> None:
 
 
 def run() -> None:
-    bot = build_application()
-
-    async def main() -> None:
-        _install_shutdown_handlers(bot)
-        async with bot:
-            await bot.start(settings.DISCORD_TOKEN)
-
     if settings.USE_PROXY:
         if settings.PROXY_URLS:
-            logger.info("Прокси включён (пул из %s адресов, стратегия: %s)", len(settings.PROXY_URLS), settings.PROXY_STRATEGY)
+            logger.info(
+                "Прокси включён (пул из %s адресов, стратегия: %s)",
+                len(settings.PROXY_URLS),
+                settings.PROXY_STRATEGY,
+            )
         else:
             logger.info("Прокси включён: %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
     else:
         logger.info("Прокси выключен")
+
+    async def main() -> None:
+        bot = build_application()
+        _install_shutdown_handlers(bot)
+        async with bot:
+            await bot.start(settings.DISCORD_TOKEN)
 
     try:
         asyncio.run(main())
