@@ -35,16 +35,33 @@ def _create_bot() -> commands.Bot:
 
     import aiohttp
 
-    if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
-        kwargs["proxy_auth"] = aiohttp.BasicAuth(
-            settings.PROXY_USERNAME, settings.PROXY_PASSWORD
-        )
-        # discord.py принимает credentials отдельно от URL.
-        kwargs["proxy"] = f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}"
-    else:
-        kwargs["proxy"] = build_proxy_url()
+    proxy_type = getattr(settings, "PROXY_TYPE", "http").lower().strip()
+    if proxy_type in ("socks5", "socks5h", "socks4"):
+        from aiohttp_socks import ProxyConnector
 
-    logger.info("Discord через прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+        proxy_url = build_proxy_url()
+        kwargs["connector"] = ProxyConnector.from_url(proxy_url)
+        logger.info(
+            "Discord через %s-прокси %s:%s",
+            proxy_type.upper(),
+            settings.PROXY_HOST,
+            settings.PROXY_PORT,
+        )
+    else:
+        if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
+            kwargs["proxy_auth"] = aiohttp.BasicAuth(
+                settings.PROXY_USERNAME, settings.PROXY_PASSWORD
+            )
+            # discord.py принимает credentials отдельно от URL.
+            clean_host = (
+                settings.PROXY_HOST.split("://")[-1].lstrip("/").split("@")[-1].split(":")[0]
+            )
+            kwargs["proxy"] = f"http://{clean_host}:{settings.PROXY_PORT}"
+        else:
+            kwargs["proxy"] = build_proxy_url("http")
+
+        logger.info("Discord через HTTP-прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+
     return commands.Bot(**kwargs)
 
 

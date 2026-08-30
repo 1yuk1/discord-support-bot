@@ -340,12 +340,22 @@
         },
         {
             "name": "Use Proxy",
-            "description": "Включить HTTP прокси для Discord и OpenRouter (true/false)",
+            "description": "Включить прокси (HTTP / SOCKS5) для Discord и OpenRouter (true/false)",
             "env_variable": "USE_PROXY",
             "default_value": "false",
             "user_viewable": true,
             "user_editable": true,
             "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Proxy Type",
+            "description": "Тип прокси: http или socks5 (по умолчанию http)",
+            "env_variable": "PROXY_TYPE",
+            "default_value": "http",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:http,socks5,socks5h,socks4",
             "field_type": "text"
         },
         {

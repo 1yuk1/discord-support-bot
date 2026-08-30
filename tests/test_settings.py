@@ -106,3 +106,27 @@ def test_generated_settings_cover_all_read_sections(tmp_path):
         "state",
     }
     assert expected_sections.issubset(generated.keys())
+
+
+def test_build_proxy_url(monkeypatch):
+    from bot import settings
+    from bot.llm import build_proxy_url
+
+    monkeypatch.setattr(settings, "PROXY_HOST", "217.198.9.236")
+    monkeypatch.setattr(settings, "PROXY_PORT", 8443)
+    monkeypatch.setattr(settings, "PROXY_USERNAME", "user")
+    monkeypatch.setattr(settings, "PROXY_PASSWORD", "pass")
+    monkeypatch.setattr(settings, "PROXY_TYPE", "socks5")
+
+    assert build_proxy_url() == "socks5://user:pass@217.198.9.236:8443"
+    assert build_proxy_url("http") == "http://user:pass@217.198.9.236:8443"
+
+    # Тест очистки хоста, если передали со слэшами или схемами
+    monkeypatch.setattr(settings, "PROXY_HOST", "http://217.198.9.236")
+    monkeypatch.setattr(settings, "PROXY_USERNAME", "")
+    monkeypatch.setattr(settings, "PROXY_PASSWORD", "")
+    monkeypatch.setattr(settings, "PROXY_TYPE", "http")
+    assert build_proxy_url() == "http://217.198.9.236:8443"
+
+    monkeypatch.setattr(settings, "PROXY_HOST", "/custom-user:pass@178.171.42.91:9255")
+    assert build_proxy_url("socks5") == "socks5://178.171.42.91:8443"

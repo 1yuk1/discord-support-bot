@@ -181,6 +181,11 @@ def test_valid_port_used(tmp_path):
     assert config["proxy"]["port"] == 3128
 
 
+def test_proxy_type_generated(tmp_path):
+    config = generate(tmp_path, PROXY_TYPE="socks5")
+    assert config["proxy"]["type"] == "socks5"
+
+
 @pytest.mark.parametrize(
     "token",
     [

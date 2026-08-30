@@ -222,6 +222,7 @@ FALLBACK_AI_USE_PROXY: bool = bool(_fallback_cfg.get("use_proxy", False))
 # ── Proxy ────────────────────────────────────────────────────────────────────
 _proxy_cfg = _section("proxy")
 USE_PROXY: bool = bool(_proxy_cfg.get("enabled", False))
+PROXY_TYPE: str = _proxy_cfg.get("type", "http").lower()
 PROXY_HOST: str = _proxy_cfg.get("host", "127.0.0.1")
 PROXY_PORT: int = int(_proxy_cfg.get("port", 10808))
 PROXY_USERNAME: str = _proxy_cfg.get("username", "")

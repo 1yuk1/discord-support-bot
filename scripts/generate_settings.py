@@ -235,6 +235,7 @@ use_proxy = {boolean("FALLBACK_AI_USE_PROXY", False)}
 
 [proxy]
 enabled = {boolean("USE_PROXY", False)}
+type = {quote(env("PROXY_TYPE", "http"))}
 host = {quote(env("PROXY_HOST", "127.0.0.1"))}
 port = {integer("PROXY_PORT", 10808)}
 username = {quote(env("PROXY_USERNAME"))}

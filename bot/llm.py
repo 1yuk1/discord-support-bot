@@ -27,14 +27,26 @@ IMAGE_LOAD_FAILED = (
 )
 
 
-def build_proxy_url() -> str:
-    """HTTP-прокси с учётом необязательной авторизации."""
+def build_proxy_url(scheme: str | None = None) -> str:
+    """Формирует URL прокси (HTTP или SOCKS5) с учётом авторизации и очистки хоста."""
+    raw_host = (settings.PROXY_HOST or "127.0.0.1").strip()
+    detected_scheme = None
+    if "://" in raw_host:
+        detected_scheme, raw_host = raw_host.split("://", 1)
+
+    clean_host = raw_host.lstrip("/").split("@")[-1].split(":")[0]
+    selected_scheme = (
+        scheme or detected_scheme or getattr(settings, "PROXY_TYPE", "http") or "http"
+    ).lower().strip()
+    if selected_scheme not in ("http", "https", "socks5", "socks5h", "socks4"):
+        selected_scheme = "http"
+
     if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
         return (
-            f"http://{settings.PROXY_USERNAME}:{settings.PROXY_PASSWORD}"
-            f"@{settings.PROXY_HOST}:{settings.PROXY_PORT}"
+            f"{selected_scheme}://{settings.PROXY_USERNAME}:{settings.PROXY_PASSWORD}"
+            f"@{clean_host}:{settings.PROXY_PORT}"
         )
-    return f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}"
+    return f"{selected_scheme}://{clean_host}:{settings.PROXY_PORT}"
 
 
 class ModelRegistry:
