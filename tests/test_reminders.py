@@ -199,17 +199,29 @@ def test_staff_roles_default_to_ignored_roles(monkeypatch):
 
 # ── Заглушки Discord ─────────────────────────────────────────────────────────
 class FakeMessage:
-    def __init__(self, author, created_at):
+    def __init__(self, author, created_at, content="Привет, помогите"):
+        self.id = 1
         self.author = author
         self.created_at = SimpleNamespace(timestamp=lambda: created_at)
+        self.content = content
+        self.clean_content = content
+        self.attachments = []
+        self.embeds = []
 
 
 class FakeChannel:
-    def __init__(self, channel_id=1, category_id=111, messages=()):
+    def __init__(self, channel_id=1, category_id=111, messages=(), guild=None, permissions=None):
         self.id = channel_id
         self.category_id = category_id
         self.sent = []
         self._messages = list(messages)
+        self.guild = guild
+        self._permissions = permissions
+
+    def permissions_for(self, member):
+        if self._permissions is not None:
+            return self._permissions
+        return SimpleNamespace(view_channel=True, send_messages=True)
 
     async def send(self, content, **kwargs):
         self.sent.append(content)
@@ -227,6 +239,16 @@ class FakeChannel:
                 return generator()
 
         return Iterator()
+
+
+class FakeGuild:
+    def __init__(self, guild_id=100, roles=()):
+        self.id = guild_id
+        self._roles = {role.id: role for role in roles}
+        self.me = SimpleNamespace(id=999)
+
+    def get_role(self, role_id):
+        return self._roles.get(role_id)
 
 
 class FakeBot:
@@ -355,3 +377,52 @@ def test_service_does_not_repeat_immediately(reminder_environment):
     assert run(service.run_once()) == 1
     assert run(service.run_once()) == 0
     assert len(channel.sent) == 1
+
+
+def test_service_skips_and_does_not_call_llm_when_roles_missing_on_guild(reminder_environment, monkeypatch):
+    """Если на сервере нет роли для пинга, LLM не вызывается и токены не сжигаются."""
+    monkeypatch.setattr(settings, "REMINDER_MESSAGE_MODE", "llm")
+    guild_without_role = FakeGuild(guild_id=123, roles=[])
+    channel = FakeChannel(guild=guild_without_role)
+    reminder_environment._channels[channel.id] = waiting_state(2.0)
+
+    agent = FakeAgent("Текст напоминания от LLM")
+    service = reminders.ReminderService(FakeBot([channel]), agent)
+
+    assert run(service.run_once()) == 0
+    assert agent.calls == 0  # Ни одного вызова LLM!
+    assert channel.sent == []
+
+
+def test_service_calls_llm_and_sends_when_role_exists_on_guild(reminder_environment, monkeypatch):
+    """Если роль существует на сервере, напоминание генерируется и отправляется."""
+    monkeypatch.setattr(settings, "REMINDER_MESSAGE_MODE", "llm")
+    guild_with_role = FakeGuild(guild_id=123, roles=[SimpleNamespace(id=900)])
+    user = SimpleNamespace(bot=False, display_name="Игрок", roles=[])
+    msg = FakeMessage(user, time.time() - 2 * HOUR, content="Помогите с донатом")
+    channel = FakeChannel(guild=guild_with_role, messages=[msg])
+    reminder_environment._channels[channel.id] = waiting_state(2.0)
+
+    agent = FakeAgent("Текст напоминания от LLM.")
+    service = reminders.ReminderService(FakeBot([channel]), agent)
+
+    assert run(service.run_once()) == 1
+    assert agent.calls == 1
+    assert len(channel.sent) == 1
+    assert "<@&900>" in channel.sent[0]
+
+
+def test_service_skips_when_bot_lacks_channel_permissions(reminder_environment, monkeypatch):
+    """Если у бота нет прав писать в канал, LLM не вызывается."""
+    monkeypatch.setattr(settings, "REMINDER_MESSAGE_MODE", "llm")
+    no_perms = SimpleNamespace(view_channel=True, send_messages=False)
+    guild = FakeGuild(guild_id=123, roles=[SimpleNamespace(id=900)])
+    channel = FakeChannel(guild=guild, permissions=no_perms)
+    reminder_environment._channels[channel.id] = waiting_state(2.0)
+
+    agent = FakeAgent("Текст напоминания от LLM")
+    service = reminders.ReminderService(FakeBot([channel]), agent)
+
+    assert run(service.run_once()) == 0
+    assert agent.calls == 0
+    assert channel.sent == []

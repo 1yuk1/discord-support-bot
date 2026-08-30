@@ -152,3 +152,65 @@ def should_use_message_as_question(message) -> bool:
     if getattr(message, "embeds", None):
         return True
     return bool(extract_image_urls(message))
+
+
+# ── Роли, персонал, администраторы и категории ──────────────────────────────
+def is_admin_member(member, admin_role_ids: list[int] = (), admin_user_ids: list[int] = ()) -> bool:
+    """Проверяет, является ли пользователь администратором (полный байпасс всех ограничений)."""
+    if member is None:
+        return False
+
+    # ID пользователя в списке админов
+    member_id = getattr(member, "id", None)
+    if member_id and member_id in set(admin_user_ids or []):
+        return True
+
+    # Права Administrator в Discord
+    guild_permissions = getattr(member, "guild_permissions", None)
+    if guild_permissions and getattr(guild_permissions, "administrator", False):
+        return True
+
+    # Роли администратора
+    if admin_role_ids:
+        admin_roles_set = set(admin_role_ids)
+        if any(getattr(role, "id", None) in admin_roles_set for role in getattr(member, "roles", []) or []):
+            return True
+
+    return False
+
+
+def is_staff_member(
+    member,
+    staff_role_ids: list[int] = (),
+    admin_role_ids: list[int] = (),
+    admin_user_ids: list[int] = (),
+) -> bool:
+    """Проверяет, является ли пользователь персоналом поддержки (или администратором)."""
+    if member is None:
+        return False
+    if is_admin_member(member, admin_role_ids, admin_user_ids):
+        return True
+    if staff_role_ids:
+        staff_roles_set = set(staff_role_ids)
+        if any(getattr(role, "id", None) in staff_roles_set for role in getattr(member, "roles", []) or []):
+            return True
+    return False
+
+
+def is_ticket_channel_allowed(
+    channel,
+    allowed_category_ids: list[int] = (),
+    excluded_category_ids: list[int] = (),
+) -> bool:
+    """Проверяет, разрешена ли работа бота в канале/категории (Whitelist и Blacklist)."""
+    category_id = getattr(channel, "category_id", None)
+
+    # Blacklist ("везде кроме")
+    if excluded_category_ids and category_id is not None and category_id in set(excluded_category_ids):
+        return False
+
+    # Whitelist ("нигде кроме")
+    if allowed_category_ids:
+        return category_id in set(allowed_category_ids)
+
+    return True

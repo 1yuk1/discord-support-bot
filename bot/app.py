@@ -22,37 +22,31 @@ def _create_bot() -> commands.Bot:
     intents.message_content = True
     intents.messages = True
 
-    # help_command=None: своя команда /help и !help заняли бы имя встроенной,
-    # discord.py падает на конфликте при регистрации.
     kwargs = {
         "command_prefix": settings.COMMAND_PREFIX,
         "intents": intents,
         "help_command": None,
     }
 
-    if not settings.USE_PROXY:
+    if not settings.USE_PROXY or not settings.DISCORD_USE_PROXY:
+        logger.info("Discord подключение напрямую (без прокси)")
         return commands.Bot(**kwargs)
 
     import aiohttp
 
     proxy_type = getattr(settings, "PROXY_TYPE", "http").lower().strip()
-    if proxy_type in ("socks5", "socks5h", "socks4"):
+    active_proxy = build_proxy_url()
+    if proxy_type in ("socks5", "socks5h", "socks4") or active_proxy.lower().startswith("socks"):
         from aiohttp_socks import ProxyConnector
 
-        proxy_url = build_proxy_url()
-        kwargs["connector"] = ProxyConnector.from_url(proxy_url)
-        logger.info(
-            "Discord через %s-прокси %s:%s",
-            proxy_type.upper(),
-            settings.PROXY_HOST,
-            settings.PROXY_PORT,
-        )
+        kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+        safe_socks = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
+        logger.info("Discord подключение через SOCKS-прокси: %s", safe_socks)
     else:
         if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
             kwargs["proxy_auth"] = aiohttp.BasicAuth(
                 settings.PROXY_USERNAME, settings.PROXY_PASSWORD
             )
-            # discord.py принимает credentials отдельно от URL.
             clean_host = (
                 settings.PROXY_HOST.split("://")[-1].lstrip("/").split("@")[-1].split(":")[0]
             )
@@ -60,7 +54,8 @@ def _create_bot() -> commands.Bot:
         else:
             kwargs["proxy"] = build_proxy_url("http")
 
-        logger.info("Discord через HTTP-прокси %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+        safe_proxy = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
+        logger.info("Discord подключение через HTTP-прокси: %s", safe_proxy)
 
     return commands.Bot(**kwargs)
 
@@ -305,7 +300,10 @@ def run() -> None:
             await bot.start(settings.DISCORD_TOKEN)
 
     if settings.USE_PROXY:
-        logger.info("Прокси включён: %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
+        if settings.PROXY_URLS:
+            logger.info("Прокси включён (пул из %s адресов, стратегия: %s)", len(settings.PROXY_URLS), settings.PROXY_STRATEGY)
+        else:
+            logger.info("Прокси включён: %s:%s", settings.PROXY_HOST, settings.PROXY_PORT)
     else:
         logger.info("Прокси выключен")
 

@@ -100,7 +100,6 @@ def test_strip_transfer_tag():
     short_truncated_raw = "Ожидайте ответа. [TRANSFER"
     assert strip_transfer_tag(short_truncated_raw) == "Ожидайте ответа."
 
-
 def test_empty_input_is_safe():
     for check in (is_user_human_transfer, is_llm_human_transfer, should_force_human_transfer):
         assert not check("")

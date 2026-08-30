@@ -205,8 +205,14 @@ def build() -> str:
 token = {quote(token)}
 command_prefix = {quote(env("COMMAND_PREFIX", "!"))}
 ticket_category_ids = {id_list("TICKET_CATEGORY_IDS", "TICKET_CATEGORY_ID")}
+excluded_category_ids = {id_list("TICKET_EXCLUDED_CATEGORY_IDS", "EXCLUDED_CATEGORY_IDS")}
 bot_role_ids = {id_list("BOT_ROLE_IDS", "BOT_ROLE_ID")}
 ignored_role_ids = {id_list("IGNORED_ROLE_IDS")}
+
+[admins]
+# Администраторы бота (полный байпасс лимитов, доступ ко всем командам и защита от таймаутов)
+role_ids = {id_list("ADMIN_ROLE_IDS", "ADMIN_ROLES")}
+user_ids = {id_list("ADMIN_USER_IDS", "ADMIN_USERS")}
 
 [ai]
 embedding_model = {quote(env("EMBEDDING_MODEL", "intfloat/multilingual-e5-large-instruct"))}
@@ -216,6 +222,8 @@ request_timeout_seconds = {integer("AI_REQUEST_TIMEOUT_SECONDS", 90)}
 max_concurrent_requests = {integer("AI_MAX_CONCURRENT_REQUESTS", 2)}
 temperature = {number("AI_TEMPERATURE", 0.3)}
 max_tokens = {integer("AI_MAX_TOKENS", 4096)}
+circuit_breaker_cooldown_seconds = {integer("CIRCUIT_BREAKER_COOLDOWN_SECONDS", 600)}
+circuit_breaker_threshold = {integer("CIRCUIT_BREAKER_THRESHOLD", 3)}
 
 [ai.openrouter]
 api_key = {quote(api_key)}
@@ -240,6 +248,11 @@ host = {quote(env("PROXY_HOST", "127.0.0.1"))}
 port = {integer("PROXY_PORT", 10808)}
 username = {quote(env("PROXY_USERNAME"))}
 password = {quote(env("PROXY_PASSWORD"))}
+# Или список нескольких прокси для пула / автоматического переключения (Failover / Round-Robin):
+urls = {str_list("PROXY_URLS", [])}
+strategy = {quote(env("PROXY_STRATEGY", "failover"))}
+cooldown_seconds = {integer("PROXY_COOLDOWN_SECONDS", 60)}
+discord_use_proxy = {boolean("DISCORD_USE_PROXY", False)}
 
 [paths]
 model_cache = "model_cache"
@@ -337,6 +350,24 @@ boosty_url = {quote(env("SERVER_BOOSTY_URL", "https://boosty.to/ingrog"))}
 snapshot_file = "logs/conversation_state.json"
 save_interval_seconds = {integer("STATE_SAVE_INTERVAL_SECONDS", 30)}
 ttl_seconds = {integer("STATE_TTL_SECONDS", 604800)}
+
+# ── Настройки для нескольких серверов (Multi-Guild) ─────────────────────────
+# Бот может работать на нескольких серверах Discord с индивидуальными
+# настройками ролей, категорий и напоминаний для каждого сервера.
+#
+# [servers.123456789012345678]
+# name = "Основной сервер"
+# admin_role_ids = [111111111111111111]
+# staff_role_ids = [222222222222222222]
+# ping_role_ids = [333333333333333333]
+# ticket_category_ids = [444444444444444444]  # Whitelist: только в этой категории
+# excluded_category_ids = []                  # Blacklist: исключенные категории
+#
+# [servers.987654321098765432]
+# name = "Второй сервер"
+# admin_role_ids = [555555555555555555]
+# ticket_category_ids = []
+# excluded_category_ids = [666666666666666666]  # Blacklist: кроме этой категории
 """
 
 

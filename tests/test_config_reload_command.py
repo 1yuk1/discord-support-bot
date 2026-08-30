@@ -18,6 +18,7 @@ ignored_role_ids = [999]
 
 [ai]
 temperature = 0.3
+max_tokens = 4096
 
 [ai.openrouter]
 api_key = "test-key"

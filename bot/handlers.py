@@ -22,12 +22,15 @@ from bot.filters import (
     IMAGE_ONLY_PLACEHOLDER,
     extract_image_urls,
     extract_message_text,
+    is_admin_member,
+    is_staff_member,
+    is_ticket_channel_allowed,
     is_ticket_close_notification,
     is_ticket_opening_message,
     should_use_message_as_question,
 )
 from bot.llm import ERROR_PREFIX, ERROR_TIMEOUT
-from bot.logging_setup import logger
+from bot.logging_setup import channel_label, logger
 from bot.state import store
 from bot.text_utils import normalize_for_dedup
 from bot import mention_moderation, reminders, ticket_logs
@@ -59,29 +62,44 @@ class MessageRouter:
         self._ticket_categories = set(settings.TICKET_CATEGORY_IDS)
         self._bot_role_ids = set(settings.BOT_ROLE_IDS)
         self._ignored_role_ids = set(settings.IGNORED_ROLE_IDS)
+        if hasattr(self, "reminder_service") and hasattr(self.reminder_service, "_warned_missing_roles"):
+            self.reminder_service._warned_missing_roles.clear()
 
     # ── Проверки доступа ─────────────────────────────────────────────────────
     def is_ticket_channel(self, channel) -> bool:
-        if not self._ticket_categories:
-            return True
-        return getattr(channel, "category_id", None) in self._ticket_categories
-
-    def has_ignored_role(self, member) -> bool:
-        if not self._ignored_role_ids or member is None:
-            return False
-        return any(
-            role.id in self._ignored_role_ids for role in getattr(member, "roles", []) or []
+        guild = getattr(channel, "guild", None)
+        guild_id = getattr(guild, "id", None)
+        guild_cfg = settings.get_guild_config(guild_id)
+        allowed_cats = guild_cfg.ticket_category_ids or list(self._ticket_categories)
+        return is_ticket_channel_allowed(
+            channel,
+            allowed_category_ids=allowed_cats,
+            excluded_category_ids=guild_cfg.excluded_category_ids,
         )
 
+    def has_ignored_role(self, member) -> bool:
+        if member is None:
+            return False
+        guild = getattr(member, "guild", None)
+        guild_id = getattr(guild, "id", None)
+        guild_cfg = settings.get_guild_config(guild_id)
+        staff_roles = set(guild_cfg.staff_role_ids or self._ignored_role_ids)
+        if staff_roles and any(getattr(role, "id", None) in staff_roles for role in getattr(member, "roles", []) or []):
+            return True
+        return False
+
     def bot_has_required_role(self, guild) -> bool:
-        if not self._bot_role_ids:
+        guild_id = getattr(guild, "id", None)
+        guild_cfg = settings.get_guild_config(guild_id)
+        required_roles = guild_cfg.bot_role_ids or list(self._bot_role_ids)
+        if not required_roles:
             return True
         if guild is None or self._bot.user is None:
             return False
         member = guild.get_member(self._bot.user.id)
         if member is None:
             return False
-        return any(role.id in self._bot_role_ids for role in member.roles)
+        return any(role.id in required_roles for role in getattr(member, "roles", []) or [])
 
     # ── Debounce ─────────────────────────────────────────────────────────────
     @staticmethod
@@ -161,7 +179,14 @@ class MessageRouter:
             len(parts),
             text[:200].replace("\n", " "),
         )
-        await self.run_ai_reply(channel, state, text, image_urls, author_is_bot)
+        try:
+            await self.run_ai_reply(channel, state, text, image_urls, author_is_bot)
+        except Exception as exc:
+            log_exception(
+                "Необработанная ошибка при обработке склейки",
+                exc,
+                channel_id=getattr(channel, "id", "unknown"),
+            )
 
     # ── Ответ AI ─────────────────────────────────────────────────────────────
     async def run_ai_reply(self, channel, state: dict, text: str, image_urls, author_is_bot) -> None:
@@ -197,11 +222,12 @@ class MessageRouter:
         )
 
         state["ai_busy"] = True
+        answer = None
         try:
-            async with channel.typing():
+            async def _generate_task():
                 async with self._semaphore:
                     try:
-                        answer = await asyncio.wait_for(
+                        return await asyncio.wait_for(
                             asyncio.to_thread(
                                 self._agent.generate_answer,
                                 text,
@@ -216,7 +242,18 @@ class MessageRouter:
                             channel_id,
                             settings.AI_REQUEST_TIMEOUT_SECONDS,
                         )
-                        answer = ERROR_TIMEOUT
+                        return ERROR_TIMEOUT
+
+            # typing() не должен ломать ответ при сетевых сбоях Discord / прокси
+            try:
+                async with channel.typing():
+                    answer = await _generate_task()
+            except Exception as typing_exc:
+                logger.debug("Сбой отправки статуса 'typing' в Discord (игнорируется): %s", typing_exc)
+                answer = await _generate_task()
+        except Exception as exc:
+            log_exception("Сбой в run_ai_reply", exc, channel_id=channel_id)
+            answer = ERROR_TIMEOUT
         finally:
             state["ai_busy"] = False
 
@@ -288,8 +325,8 @@ class MessageRouter:
         )
         store.append_turn(state, text, TRANSFER_ANSWER, message.author.bot)
         logger.info(
-            "Тикет передан человеку | channel_id=%s | reason=%s",
-            getattr(message.channel, "id", "unknown"),
+            "Тикет передан человеку | channel=%s | reason=%s",
+            channel_label(message.channel),
             reason,
         )
 
@@ -299,15 +336,19 @@ class MessageRouter:
         if not settings.REMINDERS_ENABLED:
             return
 
+        guild = getattr(message, "guild", None)
         category_id = getattr(message.channel, "category_id", None)
-        config = settings.reminder_config_for(category_id)
+        config = settings.reminder_config_for(category_id, getattr(guild, "id", None) if guild else None)
         if not config.get("enabled"):
             return
 
         state = store.get_or_create(channel_id)
+        is_staff_author = self.has_ignored_role(message.author) or reminders.is_staff(
+            message.author, config.get("staff_role_ids")
+        )
         reminders.record_activity(
             state,
-            is_staff_author=reminders.is_staff(message.author, config.get("staff_role_ids")),
+            is_staff_author=is_staff_author,
             is_bot_author=bool(message.author.bot),
         )
         store.mark_dirty()
@@ -316,6 +357,7 @@ class MessageRouter:
     async def handle_message(self, message) -> None:
         channel = message.channel
         channel_id = getattr(channel, "id", "unknown")
+        ch_label = channel_label(channel)
         bot_user = self._bot.user
 
         # Свои же сообщения игнорируем всегда и до любых проверок.
@@ -348,7 +390,7 @@ class MessageRouter:
 
         if not message.author.bot and self.has_ignored_role(message.author):
             logger.info(
-                "Игнор по роли | channel_id=%s | author=%s", channel_id, message.author
+                "Игнор по роли | channel=%s | author=%s", ch_label, message.author
             )
             return
 
@@ -369,7 +411,7 @@ class MessageRouter:
         if message.author.bot:
             if is_ticket_close_notification(text):
                 store.remember_processed(state, message.id)
-                logger.info("Уведомление о закрытии тикета пропущено | channel_id=%s", channel_id)
+                logger.info("Уведомление о закрытии тикета пропущено | channel=%s", ch_label)
                 return
             if is_ticket_opening_message(text):
                 if state["ticket_opening_handled"]:
@@ -379,8 +421,8 @@ class MessageRouter:
                 store.mark_dirty()
 
         logger.info(
-            "Сообщение принято | channel_id=%s | author=%s | preview=%s",
-            channel_id,
+            "Сообщение принято | channel=%s | author=%s | preview=%s",
+            ch_label,
             message.author,
             text[:300].replace("\n", " "),
         )
@@ -395,7 +437,7 @@ class MessageRouter:
                 text,
                 image_urls=image_urls or None,
             )
-            logger.info("Бот выключен в канале, ответ не отправлен | channel_id=%s", channel_id)
+            logger.info("Бот выключен в канале, ответ не отправлен | channel=%s", ch_label)
             return
 
         transfer_reason = None
@@ -417,17 +459,18 @@ class MessageRouter:
         )
 
         if state["human_mode"]:
-            logger.info("Канал в режиме передачи человеку | channel_id=%s", channel_id)
+            logger.info("Канал в режиме передачи человеку | channel=%s", ch_label)
             self.cancel_debounce(state)
             await moderate_ping_spam(message, state)
             store.mark_dirty()
             return
 
         if not self.bot_has_required_role(message.guild):
+            guild_cfg = settings.get_guild_config(getattr(message.guild, "id", None) if message.guild else None)
             logger.info(
-                "У бота нет требуемой роли | channel_id=%s | required=%s",
-                channel_id,
-                sorted(self._bot_role_ids),
+                "У бота нет требуемой роли | channel=%s | required=%s",
+                ch_label,
+                sorted(guild_cfg.bot_role_ids or self._bot_role_ids),
             )
             return
 

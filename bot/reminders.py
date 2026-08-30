@@ -18,7 +18,8 @@ from datetime import datetime, time as dtime, timezone
 import zoneinfo
 
 from bot import settings
-from bot.logging_setup import log_exception, logger
+from bot.filters import is_ticket_channel_allowed
+from bot.logging_setup import channel_label, log_exception, logger
 
 # Сколько последних сообщений канала перечитываем перед отправкой.
 _VERIFY_HISTORY_LIMIT = 5
@@ -226,6 +227,63 @@ class ReminderService:
     def __init__(self, bot, agent) -> None:
         self._bot = bot
         self._agent = agent
+        self._warned_missing_roles: set = set()
+
+    def _can_send_in_channel(self, channel) -> bool:
+        """Проверяет, есть ли у бота права на просмотр канала и отправку сообщений."""
+        guild = getattr(channel, "guild", None)
+        me = getattr(guild, "me", None) if guild is not None else None
+        if me is not None and hasattr(channel, "permissions_for"):
+            try:
+                permissions = channel.permissions_for(me)
+                if not (permissions.view_channel and permissions.send_messages):
+                    return False
+            except Exception:
+                pass
+        return True
+
+    def _get_valid_ping_role_ids(self, channel, ping_role_ids: list[int]) -> list[int]:
+        """Фильтрует список ролей для пинга, оставляя только существующие на сервере канала."""
+        if not ping_role_ids:
+            return []
+        guild = getattr(channel, "guild", None)
+        if guild is None:
+            return list(ping_role_ids)
+
+        guild_id = getattr(guild, "id", None)
+        get_role_fn = getattr(guild, "get_role", None)
+        if get_role_fn is None:
+            return list(ping_role_ids)
+
+        valid_role_ids = []
+        for role_id in ping_role_ids:
+            if get_role_fn(role_id) is not None:
+                valid_role_ids.append(role_id)
+            else:
+                warn_key = (guild_id, role_id)
+                if warn_key not in self._warned_missing_roles:
+                    self._warned_missing_roles.add(warn_key)
+                    logger.warning(
+                        "Роль %s не найдена на сервере %s | channel=%s",
+                        role_id,
+                        guild_id,
+                        channel_label(channel),
+                    )
+
+        if ping_role_ids and not valid_role_ids:
+            all_key = (guild_id, "all_invalid", tuple(ping_role_ids))
+            if all_key not in self._warned_missing_roles:
+                self._warned_missing_roles.add(all_key)
+                logger.warning(
+                    "Все роли для пинга недействительны на сервере %s | channel=%s | "
+                    "было=%s | напоминания на этом сервере отправляться не будут",
+                    guild_id,
+                    channel_label(channel),
+                    ping_role_ids,
+                )
+            return []
+
+        return valid_role_ids
 
     # ── Текст ────────────────────────────────────────────────────────────────
     async def _build_text(self, channel, config: dict) -> str:
@@ -260,8 +318,8 @@ class ReminderService:
             if not _is_valid_reminder_text(candidate):
                 logger.warning(
                     "Текст напоминания от LLM не прошёл проверку, беру заготовку | "
-                    "channel_id=%s | preview=%s",
-                    getattr(channel, "id", "unknown"),
+                    "channel=%s | preview=%s",
+                    channel_label(channel),
                     candidate[:120].replace("\n", " "),
                 )
                 return static_phrase(config)
@@ -270,7 +328,7 @@ class ReminderService:
             log_exception(
                 "Не удалось сгенерировать текст напоминания, беру заготовку",
                 exc,
-                channel_id=getattr(channel, "id", "unknown"),
+                channel=channel,
             )
             return static_phrase(config)
 
@@ -298,7 +356,7 @@ class ReminderService:
             log_exception(
                 "Не удалось перечитать историю перед напоминанием",
                 exc,
-                channel_id=getattr(channel, "id", "unknown"),
+                channel=channel,
             )
         return False
 
@@ -319,14 +377,28 @@ class ReminderService:
             if channel is None:
                 continue
 
+            guild = getattr(channel, "guild", None)
+            guild_id = getattr(guild, "id", None)
+            guild_cfg = settings.get_guild_config(guild_id)
+
             category_id = getattr(channel, "category_id", None)
-            if ticket_categories and category_id not in ticket_categories:
-                continue
-            if category_id in excluded:
+            allowed_cats = guild_cfg.ticket_category_ids or list(ticket_categories)
+            excluded_cats = guild_cfg.excluded_category_ids or list(excluded)
+            if not is_ticket_channel_allowed(channel, allowed_cats, excluded_cats):
                 continue
 
-            config = settings.reminder_config_for(category_id)
+            config = settings.reminder_config_for(category_id, guild_id)
             if not should_remind(state, config):
+                continue
+
+            if not self._can_send_in_channel(channel):
+                continue
+
+            ping_role_ids = config.get("ping_role_ids") or []
+            valid_role_ids = self._get_valid_ping_role_ids(channel, ping_role_ids)
+            if ping_role_ids and not valid_role_ids:
+                # Роли для пинга заданы, но ни одна не существует на сервере этого канала.
+                # Не вызываем LLM и не тратим токены.
                 continue
 
             started = waiting_since(state)
@@ -337,45 +409,30 @@ class ReminderService:
                 store.mark_dirty()
                 continue
 
-            if await self._send(channel, state, config, started):
+            if await self._send(channel, state, config, started, valid_role_ids):
                 sent += 1
 
         if sent:
             store.save(force=True)
         return sent
 
-    async def _send(self, channel, state: dict, config: dict, started: float) -> bool:
+    async def _send(
+        self,
+        channel,
+        state: dict,
+        config: dict,
+        started: float,
+        valid_role_ids: list[int] | None = None,
+    ) -> bool:
         from bot.discord_client import send_reminder
 
+        if valid_role_ids is None:
+            ping_role_ids = config.get("ping_role_ids") or []
+            valid_role_ids = self._get_valid_ping_role_ids(channel, ping_role_ids)
+            if ping_role_ids and not valid_role_ids:
+                return False
+
         text = await self._build_text(channel, config)
-        ping_role_ids = config.get("ping_role_ids") or []
-        
-        # Фильтруем несуществующие роли: "@Неизвестная роль" в Discord = мусор.
-        valid_role_ids = []
-        guild = getattr(channel, "guild", None)
-        if guild is not None and ping_role_ids:
-            for role_id in ping_role_ids:
-                if guild.get_role(role_id) is not None:
-                    valid_role_ids.append(role_id)
-                else:
-                    logger.warning(
-                        "Роль %s не найдена на сервере %s | channel_id=%s",
-                        role_id,
-                        guild.id,
-                        getattr(channel, "id", "unknown"),
-                    )
-        else:
-            valid_role_ids = list(ping_role_ids)
-        
-        if not valid_role_ids and ping_role_ids:
-            logger.warning(
-                "Все роли для пинга недействительны | channel_id=%s | "
-                "было=%s | напоминание не отправлено",
-                getattr(channel, "id", "unknown"),
-                ping_role_ids,
-            )
-            return False
-        
         content = format_reminder(text, valid_role_ids)
         message = await send_reminder(channel, content, valid_role_ids)
         if message is None:
@@ -388,9 +445,9 @@ class ReminderService:
 
         waited_hours = (time.time() - started) / 3600 if started else 0
         logger.info(
-            "Напоминание отправлено | channel_id=%s | ожидание=%.1fч | "
+            "Напоминание отправлено | channel=%s | ожидание=%.1fч | "
             "за сутки=%s/%s | роли=%s",
-            getattr(channel, "id", "unknown"),
+            channel_label(channel),
             waited_hours,
             state.get("reminder_count_today"),
             config.get("max_per_day"),

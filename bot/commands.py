@@ -22,7 +22,8 @@ from bot import incidents, reminders, settings
 from bot.discord_client import reply_private, safe_send
 from bot.llm import fallback_models, models
 from bot.logging_setup import log_exception, logger
-from bot.filters import extract_message_text
+from bot.filters import extract_message_text, is_admin_member
+from bot.metrics import metrics
 from bot.prompt import prompts
 from bot.state import store
 
@@ -311,6 +312,13 @@ def _do_reminders_status(channel) -> str:
         f"роли персонала: {config.get('staff_role_ids') or 'не заданы'}",
     ]
 
+    guild = getattr(channel, "guild", None)
+    ping_roles = config.get("ping_role_ids") or []
+    if guild is not None and ping_roles:
+        valid_roles = [r for r in ping_roles if guild.get_role(r) is not None]
+        if not valid_roles:
+            lines.append("⚠️ внимание: ни одна из ролей для пинга не найдена на этом сервере Discord")
+
     if state is not None:
         started = reminders.waiting_since(state)
         if started:
@@ -424,6 +432,23 @@ def _do_config_reload(router) -> str:
     return "\n".join(lines)
 
 
+def _do_tokens() -> str:
+    """Возвращает форматированный отчёт по расходу токенов AI."""
+    return metrics.format_report()
+
+
+def is_bot_admin_check(ctx) -> bool:
+    """Проверка прав администратора для команд (Discord Admin, admin_role_ids, admin_user_ids)."""
+    member = getattr(ctx, "author", ctx)
+    guild = getattr(ctx, "guild", getattr(member, "guild", None))
+    guild_cfg = settings.get_guild_config(getattr(guild, "id", None) if guild else None)
+    return is_admin_member(
+        member,
+        admin_role_ids=guild_cfg.admin_role_ids,
+        admin_user_ids=guild_cfg.admin_user_ids,
+    )
+
+
 # ── Русские имена slash-команд ───────────────────────────────────────────────
 # Discord разрешает Unicode в именах команд, но у одной команды может быть
 # только одно имя на локаль. Поэтому русские варианты отдаются через
@@ -437,6 +462,8 @@ _RU_COMMAND_NAMES: dict[str, str] = {
     "clear_history": "очистить-историю",
     "resume_bot": "вернуть-бота",
     "summarize": "сводка",
+    "tokens": "токены",
+    "metrics": "метрики",
     "model": "модель",
     "show": "показать",
     "set": "сменить",
@@ -505,7 +532,8 @@ _HELP_TEXT = """**Команды администратора**
 `/incident list` — активные инциденты
 `/incident remove <id>` — убрать, когда проблема решена
 
-Модель AI:
+Модель AI и метрики:
+`/tokens` — статистика расхода токенов AI
 `/model show` — текущая модель
 `/model set <model>` — сменить до рестарта
 `/model save <model>` — сменить и записать в settings.toml
@@ -681,6 +709,16 @@ def _register_slash_commands(bot, agent, router=None) -> None:
 
     tree.add_command(config_group)
 
+    @tree.command(name="tokens", description="Статистика расхода токенов AI")
+    @admin_only
+    async def slash_tokens(interaction: discord.Interaction):
+        await reply_private(interaction, _do_tokens())
+
+    @tree.command(name="metrics", description="Статистика расхода токенов AI")
+    @admin_only
+    async def slash_metrics(interaction: discord.Interaction):
+        await reply_private(interaction, _do_tokens())
+
     @tree.command(name="ping", description="Проверить задержку до Discord")
     @admin_only
     async def slash_ping(interaction: discord.Interaction):
@@ -700,33 +738,38 @@ def _register_prefix_commands(bot, agent, router=None) -> None:
     только для interaction.
     """
 
+    @bot.command(name="tokens", aliases=["токены", "метрики", "metrics"])
+    @commands.check(is_bot_admin_check)
+    async def token_metrics(ctx):
+        await safe_send(ctx.channel, _do_tokens())
+
     @bot.command(name="stop", aliases=["mute", "silence", "стоп", "выкл"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def stop_in_channel(ctx):
         await safe_send(ctx.channel, _do_stop(ctx.channel, ctx.author))
 
     @bot.command(name="start", aliases=["unmute", "старт", "вкл"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def start_in_channel(ctx):
         await safe_send(ctx.channel, _do_start(ctx.channel, ctx.author))
 
     @bot.command(name="clear_history", aliases=["очистить_историю", "сброс"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def clear_history(ctx):
         await safe_send(ctx.channel, _do_clear_history(ctx.channel))
 
     @bot.command(name="resume_bot", aliases=["вернуть_бота", "вернуть"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def resume_bot(ctx):
         await safe_send(ctx.channel, _do_resume_bot(ctx.channel))
 
     @bot.command(name="bot_status", aliases=["статус"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def bot_status(ctx):
         await safe_send(ctx.channel, _do_status(ctx.channel))
 
     @bot.command(name="summarize", aliases=["сводка"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def summarize_ticket(ctx, limit: int = 80):
         limit = max(_SUMMARY_MIN_MESSAGES, min(limit, _SUMMARY_MAX_MESSAGES))
         transcript = await _collect_transcript(ctx.channel, limit, ctx.message.id)
@@ -749,67 +792,67 @@ def _register_prefix_commands(bot, agent, router=None) -> None:
         await safe_send(ctx.channel, f"Сводка тикета:\n{summary}")
 
     @bot.group(name="model", aliases=["модель"], invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def model_group(ctx):
         await safe_send(ctx.channel, _do_model_show())
 
     @model_group.command(name="set", aliases=["сменить"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def model_set(ctx, *, model_name: str):
         await safe_send(ctx.channel, _do_model_set(model_name, ctx.author))
 
     @model_group.command(name="save", aliases=["сохранить"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def model_save(ctx, *, model_name: str):
         await safe_send(ctx.channel, _do_model_save(model_name, ctx.author))
 
     @bot.group(name="reminders", aliases=["напоминания"], invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def reminders_group(ctx):
         await safe_send(ctx.channel, _do_reminders_status(ctx.channel))
 
     @reminders_group.command(name="status", aliases=["статус"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def reminders_status(ctx):
         await safe_send(ctx.channel, _do_reminders_status(ctx.channel))
 
     @reminders_group.command(name="off", aliases=["выкл"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def reminders_off(ctx):
         await safe_send(ctx.channel, _do_reminders_toggle(ctx.channel, False))
 
     @reminders_group.command(name="on", aliases=["вкл"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def reminders_on(ctx):
         await safe_send(ctx.channel, _do_reminders_toggle(ctx.channel, True))
 
     @bot.group(name="incident", aliases=["инцидент"], invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def incident_group(ctx):
         await safe_send(ctx.channel, _do_incident_list())
 
     @incident_group.command(name="list", aliases=["список"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def incident_list(ctx):
         await safe_send(ctx.channel, _do_incident_list())
 
     @incident_group.command(name="add", aliases=["добавить"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def incident_add(ctx, title: str, *, text: str):
         await safe_send(ctx.channel, _do_incident_add(title, text, ctx.author))
 
     @incident_group.command(name="remove", aliases=["удалить"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def incident_remove(ctx, incident_id: str):
         await safe_send(ctx.channel, _do_incident_remove(incident_id))
 
     @bot.group(name="config", aliases=["настройки"], invoke_without_command=True)
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def config_group(ctx):
         await safe_send(ctx.channel, f"Доступно: {settings.COMMAND_PREFIX}config reload")
 
     @config_group.command(name="reload", aliases=["перезагрузить"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def config_reload(ctx):
         await safe_send(ctx.channel, _do_config_reload(router))
 
@@ -818,7 +861,7 @@ def _register_prefix_commands(bot, agent, router=None) -> None:
         await safe_send(ctx.channel, f"Pong! Задержка: {round(bot.latency * 1000)}ms")
 
     @bot.command(name="help", aliases=["помощь", "справка"])
-    @commands.has_permissions(administrator=True)
+    @commands.check(is_bot_admin_check)
     async def help_command(ctx):
         await safe_send(ctx.channel, _HELP_TEXT)
 
