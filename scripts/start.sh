@@ -65,6 +65,8 @@ knowledge_dir = Path("knowledge")
 if knowledge_dir.is_dir():
     for path in sorted(knowledge_dir.glob("*.json")):
         feed(path)
+    for path in sorted(knowledge_dir.glob("*.md")):
+        feed(path)
 
 try:
     import tomllib
