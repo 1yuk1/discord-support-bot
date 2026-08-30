@@ -74,6 +74,7 @@ def test_llm_marker_is_narrow():
         "I will transfer your ticket to a senior specialist. [TRANSFER_TO_HUMAN]"
     )
     assert is_llm_human_transfer("[TRANSFER_TO_HUMAN]")
+    assert is_llm_human_transfer("Ожидайте ответа [TRANSFER_TO_HUM")
     assert not is_llm_human_transfer("Если проблема останется, можно обратиться к специалисту.")
     assert not is_llm_human_transfer("Передам информацию в ответе ниже.")
 
@@ -88,6 +89,16 @@ def test_strip_transfer_tag():
 
     english_raw = "Please wait a moment. [TRANSFER_TO_HUMAN]"
     assert strip_transfer_tag(english_raw) == "Please wait a moment."
+
+    # Обрезанные теги из-за лимита токенов
+    truncated_raw = "Передал ваш тикет старшему специалисту. [TRANSFER_TO_HUM"
+    assert strip_transfer_tag(truncated_raw) == "Передал ваш тикет старшему специалисту."
+
+    unclosed_raw = "Передал ваш тикет. [TRANSFER_TO_HUMAN"
+    assert strip_transfer_tag(unclosed_raw) == "Передал ваш тикет."
+
+    short_truncated_raw = "Ожидайте ответа. [TRANSFER"
+    assert strip_transfer_tag(short_truncated_raw) == "Ожидайте ответа."
 
 
 def test_empty_input_is_safe():

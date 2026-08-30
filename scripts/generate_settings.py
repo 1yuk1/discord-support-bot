@@ -215,7 +215,7 @@ search_top_k = {integer("SEARCH_TOP_K", 2)}
 request_timeout_seconds = {integer("AI_REQUEST_TIMEOUT_SECONDS", 90)}
 max_concurrent_requests = {integer("AI_MAX_CONCURRENT_REQUESTS", 2)}
 temperature = {number("AI_TEMPERATURE", 0.3)}
-max_tokens = {integer("AI_MAX_TOKENS", 1024)}
+max_tokens = {integer("AI_MAX_TOKENS", 4096)}
 
 [ai.openrouter]
 api_key = {quote(api_key)}

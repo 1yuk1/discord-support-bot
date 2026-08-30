@@ -69,7 +69,8 @@ def strip_transfer_tag(text: str) -> str:
     if not text:
         return ""
     import re
-    cleaned = re.sub(r"\[TRANSFER_TO_HUMAN\]", "", text, flags=re.IGNORECASE)
+    # Удаляет полный [TRANSFER_TO_HUMAN], а также любые обрезанные/незакрытые варианты вроде [TRANSFER_TO_HUM
+    cleaned = re.sub(r"\[TRANSFER[A-Z_]*\]?", "", text, flags=re.IGNORECASE)
     return " ".join(cleaned.split()).strip()
 
 
@@ -131,6 +132,11 @@ def is_user_human_transfer(text: str) -> bool:
 
 def is_llm_human_transfer(text: str) -> bool:
     """Ответ LLM содержит обещание передать тикет человеку."""
+    if not text:
+        return False
+    import re
+    if re.search(r"\[TRANSFER[A-Z_]*\]?", text, flags=re.IGNORECASE):
+        return True
     return _contains_phrase(text, LLM_TRANSFER_MARKERS)
 
 
