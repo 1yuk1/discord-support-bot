@@ -255,6 +255,7 @@ cooldown_seconds = {integer("PROXY_COOLDOWN_SECONDS", 60)}
 discord_use_proxy = {boolean("DISCORD_USE_PROXY", False)}
 
 [paths]
+auto_update_chroma_db = {boolean("AUTO_UPDATE_CHROMA_DB", True)}
 model_cache = "model_cache"
 database = "chroma_db"
 logs = "logs"
