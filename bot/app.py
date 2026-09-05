@@ -10,9 +10,10 @@ from discord.ext import commands, tasks
 from bot import incidents, settings, ticket_logs
 from bot.commands import register_commands
 from bot.handlers import MessageRouter
-from bot.llm import SupportAgent, build_proxy_url, create_providers
+from bot.llm import SupportAgent, create_providers
 from bot.logging_setup import log_exception, logger
 from bot.prompt import prompts
+from bot.proxy import build_proxy_url, get_active_proxy
 from bot.rag import KnowledgeIndexError, open_knowledge_index
 from bot.state import store
 
@@ -28,44 +29,32 @@ def _create_bot() -> commands.Bot:
         "help_command": None,
     }
 
-    if not settings.USE_PROXY or not settings.DISCORD_USE_PROXY:
+    if not getattr(settings, "USE_PROXY", False) or not getattr(settings, "DISCORD_USE_PROXY", False):
         logger.info("Discord подключение напрямую (без прокси)")
         return commands.Bot(**kwargs)
 
-    import aiohttp
+    active_proxy = get_active_proxy() or build_proxy_url()
+    if not active_proxy:
+        logger.warning("Проксирование Discord включено, но прокси не настроен. Подключение напрямую.")
+        return commands.Bot(**kwargs)
 
-    proxy_type = getattr(settings, "PROXY_TYPE", "http").lower().strip()
-    active_proxy = build_proxy_url()
-    if proxy_type in ("socks5", "socks5h", "socks4") or active_proxy.lower().startswith("socks"):
-        from aiohttp_socks import ProxyConnector
+    safe_proxy = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
+    is_socks = active_proxy.lower().startswith("socks") or getattr(settings, "PROXY_TYPE", "").lower() in ("socks5", "socks5h", "socks4")
 
+    from aiohttp_socks import ProxyConnector
+
+    try:
+        kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+    except RuntimeError:
         try:
-            kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+            loop = asyncio.get_event_loop()
         except RuntimeError:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            kwargs["connector"] = ProxyConnector.from_url(active_proxy)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        kwargs["connector"] = ProxyConnector.from_url(active_proxy)
 
-        safe_socks = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
-        logger.info("Discord подключение через SOCKS-прокси: %s", safe_socks)
-    else:
-        if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
-            kwargs["proxy_auth"] = aiohttp.BasicAuth(
-                settings.PROXY_USERNAME, settings.PROXY_PASSWORD
-            )
-            clean_host = (
-                settings.PROXY_HOST.split("://")[-1].lstrip("/").split("@")[-1].split(":")[0]
-            )
-            kwargs["proxy"] = f"http://{clean_host}:{settings.PROXY_PORT}"
-        else:
-            kwargs["proxy"] = build_proxy_url("http")
-
-        safe_proxy = active_proxy.split("@")[-1] if "@" in active_proxy else active_proxy
-        logger.info("Discord подключение через HTTP-прокси: %s", safe_proxy)
-
+    proto_name = "SOCKS" if is_socks else "HTTP"
+    logger.info("Discord подключение через %s-прокси: %s", proto_name, safe_proxy)
     return commands.Bot(**kwargs)
 
 
@@ -316,8 +305,21 @@ def run() -> None:
     async def main() -> None:
         bot = build_application()
         _install_shutdown_handlers(bot)
-        async with bot:
-            await bot.start(settings.DISCORD_TOKEN)
+        try:
+            async with bot:
+                await bot.start(settings.DISCORD_TOKEN)
+        except Exception as exc:
+            if getattr(settings, "USE_PROXY", False) and getattr(settings, "DISCORD_USE_PROXY", False):
+                err_text = str(exc).lower()
+                if any(k in err_text for k in ("connection reset", "errno 104", "proxy", "cannot connect", "oserror", "clientoserror")):
+                    logger.error(
+                        "Не удалось подключиться к Discord через прокси! "
+                        "Возможные причины: 1) неверный протокол (HTTP вместо SOCKS5 или наоборот); "
+                        "2) прокси-сервер недоступен или сбросил соединение; "
+                        "3) если бот запущен на зарубежном хостинге, отключите прокси для Discord "
+                        "(задайте DISCORD_USE_PROXY=false в панели Pterodactyl или settings.toml)."
+                    )
+            raise
 
     try:
         asyncio.run(main())

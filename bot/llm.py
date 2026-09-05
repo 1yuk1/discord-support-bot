@@ -1,9 +1,6 @@
 """Работа с LLM через OpenRouter и резервный OpenAI-совместимый провайдер."""
 
 import base64
-import random
-import time
-import base64
 from dataclasses import dataclass, field
 import mimetypes
 import random
@@ -16,7 +13,8 @@ from bot.escalation import TRANSFER_ANSWER
 from bot.filters import IMAGE_ONLY_PLACEHOLDER, is_short_clarification
 from bot.logging_setup import log_exception, logger
 from bot.prompt import prompts
-from bot.proxy import proxy_pool
+from bot import proxy
+from bot.proxy import build_proxy_url, get_active_proxy, normalize_proxy_url
 from bot.rag import KnowledgeIndex
 
 # Тексты ошибок для игрока. Маркер ⚠️ используется вызывающим кодом, чтобы
@@ -30,35 +28,6 @@ IMAGE_LOAD_FAILED = (
     "Не удалось загрузить скриншот. Пожалуйста, отправьте его ещё раз "
     "или опишите проблему текстом."
 )
-
-
-def build_proxy_url(scheme: str | None = None) -> str:
-    """Формирует URL прокси (HTTP или SOCKS5) с учётом пула, авторизации и очистки хоста."""
-    try:
-        active = proxy_pool.get_next_proxy()
-        if active:
-            return active
-    except Exception:
-        pass
-
-    raw_host = (settings.PROXY_HOST or "127.0.0.1").strip()
-    detected_scheme = None
-    if "://" in raw_host:
-        detected_scheme, raw_host = raw_host.split("://", 1)
-
-    clean_host = raw_host.lstrip("/").split("@")[-1].split(":")[0]
-    selected_scheme = (
-        scheme or detected_scheme or getattr(settings, "PROXY_TYPE", "http") or "http"
-    ).lower().strip()
-    if selected_scheme not in ("http", "https", "socks5", "socks5h", "socks4"):
-        selected_scheme = "http"
-
-    if settings.PROXY_USERNAME and settings.PROXY_PASSWORD:
-        return (
-            f"{selected_scheme}://{settings.PROXY_USERNAME}:{settings.PROXY_PASSWORD}"
-            f"@{clean_host}:{settings.PROXY_PORT}"
-        )
-    return f"{selected_scheme}://{clean_host}:{settings.PROXY_PORT}"
 
 
 class ModelRegistry:
@@ -102,7 +71,7 @@ class LlmProvider:
         if not self.use_proxy or not self.api_key:
             return self.client
 
-        active_proxy = proxy_pool.get_next_proxy()
+        active_proxy = proxy.proxy_pool.get_next_proxy()
         if force_refresh_proxy or self.current_proxy != active_proxy:
             self.current_proxy = active_proxy
             self.client = _create_openai_client(
@@ -180,7 +149,7 @@ def _create_openai_client(
     resolved_proxy = proxy_url if proxy_url is not None else (build_proxy_url() if use_proxy else None)
     if use_proxy and resolved_proxy:
         http_client = httpx.Client(
-            transport=httpx.HTTPTransport(proxy=resolved_proxy),
+            proxy=resolved_proxy,
             timeout=httpx_timeout,
         )
     else:
@@ -219,7 +188,8 @@ def create_providers() -> list[LlmProvider]:
     if settings.OPENROUTER_APP_NAME:
         headers["X-Title"] = settings.OPENROUTER_APP_NAME
 
-    openrouter_proxy = proxy_pool.get_next_proxy() if settings.USE_PROXY else None
+    openrouter_use_proxy = bool(settings.USE_PROXY and getattr(settings, "OPENROUTER_USE_PROXY", True))
+    openrouter_proxy = proxy.proxy_pool.get_next_proxy() if openrouter_use_proxy else None
     providers = [
         LlmProvider(
             name="openrouter",
@@ -227,7 +197,7 @@ def create_providers() -> list[LlmProvider]:
                 settings.OPENROUTER_API_KEY,
                 settings.OPENROUTER_API_URL,
                 headers,
-                settings.USE_PROXY,
+                openrouter_use_proxy,
                 timeout_seconds,
                 proxy_url=openrouter_proxy,
             ),
@@ -235,17 +205,22 @@ def create_providers() -> list[LlmProvider]:
             api_key=settings.OPENROUTER_API_KEY,
             api_url=settings.OPENROUTER_API_URL,
             headers=headers,
-            use_proxy=settings.USE_PROXY,
+            use_proxy=openrouter_use_proxy,
             timeout_seconds=timeout_seconds,
             current_proxy=openrouter_proxy,
         )
     ]
-    logger.info("AI провайдер: OpenRouter | модель=%s", settings.OPENROUTER_MODEL)
-    if settings.USE_PROXY:
-        logger.info("OpenRouter прокси пул: %s", proxy_pool.get_status())
+    logger.info(
+        "AI провайдер: OpenRouter | модель=%s | прокси=%s",
+        settings.OPENROUTER_MODEL,
+        "включён" if openrouter_use_proxy else "выключен",
+    )
+    if openrouter_use_proxy:
+        logger.info("OpenRouter прокси пул: %s", proxy.proxy_pool.get_status())
 
     if settings.FALLBACK_AI_ENABLED:
-        fallback_proxy = proxy_pool.get_next_proxy() if settings.FALLBACK_AI_USE_PROXY else None
+        fallback_use_proxy = bool(settings.USE_PROXY and getattr(settings, "FALLBACK_AI_USE_PROXY", False))
+        fallback_proxy = proxy.proxy_pool.get_next_proxy() if fallback_use_proxy else None
         providers.append(
             LlmProvider(
                 name="fallback",
@@ -253,7 +228,7 @@ def create_providers() -> list[LlmProvider]:
                     settings.FALLBACK_AI_API_KEY,
                     settings.FALLBACK_AI_API_URL,
                     {},
-                    settings.FALLBACK_AI_USE_PROXY,
+                    fallback_use_proxy,
                     timeout_seconds,
                     proxy_url=fallback_proxy,
                 ),
@@ -261,16 +236,21 @@ def create_providers() -> list[LlmProvider]:
                 api_key=settings.FALLBACK_AI_API_KEY,
                 api_url=settings.FALLBACK_AI_API_URL,
                 headers={},
-                use_proxy=settings.FALLBACK_AI_USE_PROXY,
+                use_proxy=fallback_use_proxy,
                 timeout_seconds=timeout_seconds,
                 current_proxy=fallback_proxy,
             )
         )
-        logger.info("AI резервный провайдер | модель=%s", settings.FALLBACK_AI_MODEL)
-        if settings.FALLBACK_AI_USE_PROXY:
-            logger.info("Резервный AI-провайдер прокси пул: %s", proxy_pool.get_status())
+        logger.info(
+            "AI резервный провайдер | модель=%s | прокси=%s",
+            settings.FALLBACK_AI_MODEL,
+            "включён" if fallback_use_proxy else "выключен",
+        )
+        if fallback_use_proxy:
+            logger.info("Резервный AI-провайдер прокси пул: %s", proxy.proxy_pool.get_status())
 
     return providers
+
 
 
 def create_client():
@@ -287,11 +267,11 @@ def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
     content_parts: list[dict] = []
 
     for url in image_urls:
-        use_proxy = settings.USE_PROXY and settings.DISCORD_USE_PROXY
-        max_attempts = 2 if use_proxy and not proxy_pool.is_empty else 1
+        use_proxy = bool(settings.USE_PROXY and getattr(settings, "DISCORD_USE_PROXY", False))
+        max_attempts = 2 if use_proxy and not proxy.proxy_pool.is_empty else 1
 
         for attempt in range(max_attempts):
-            proxy_url = proxy_pool.get_next_proxy() if use_proxy else None
+            proxy_url = proxy.proxy_pool.get_next_proxy() if use_proxy else None
             try:
                 with httpx.Client(
                     timeout=settings.IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
@@ -302,7 +282,7 @@ def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
                     response.raise_for_status()
 
                 if proxy_url:
-                    proxy_pool.report_success(proxy_url)
+                    proxy.proxy_pool.report_success(proxy_url)
 
                 if len(response.content) > settings.IMAGE_MAX_BYTES:
                     logger.warning(
@@ -322,7 +302,7 @@ def fetch_images_as_base64(image_urls: list[str]) -> list[dict]:
                 break
             except Exception as exc:
                 if proxy_url:
-                    proxy_pool.report_failure(proxy_url, exc)
+                    proxy.proxy_pool.report_failure(proxy_url, exc)
                 if attempt == max_attempts - 1:
                     log_exception("Не удалось скачать изображение", exc, url=url[:200])
 
@@ -393,7 +373,7 @@ class SupportAgent:
 
                     # Фиксируем успех прокси
                     if getattr(provider, "current_proxy", None):
-                        proxy_pool.report_success(provider.current_proxy)
+                        proxy.proxy_pool.report_success(provider.current_proxy)
 
                     # Учёт расхода токенов
                     usage = getattr(response, "usage", None)
@@ -412,7 +392,7 @@ class SupportAgent:
 
                     # Если сбой связан с прокси или сетью, отправляем текущий прокси в кулдаун и переключаем
                     if _is_proxy_or_network_error(exc) and getattr(provider, "current_proxy", None):
-                        proxy_pool.report_failure(provider.current_proxy, exc)
+                        proxy.proxy_pool.report_failure(provider.current_proxy, exc)
                         if hasattr(provider, "get_client"):
                             client = provider.get_client(force_refresh_proxy=True)
 

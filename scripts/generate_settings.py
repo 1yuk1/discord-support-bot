@@ -231,6 +231,7 @@ model = {quote(env("OPENROUTER_MODEL", "mimo-2.5-pro"))}
 api_url = {quote(env("OPENROUTER_API_URL", "https://openrouter.ai/api/v1"))}
 site_url = {quote(env("OPENROUTER_SITE_URL"))}
 app_name = {quote(env("OPENROUTER_APP_NAME", "SinusSMP Support Bot"))}
+use_proxy = {boolean("OPENROUTER_USE_PROXY", True)}
 
 [ai.fallback]
 # Резервный OpenAI-совместимый провайдер. При ошибке OpenRouter бот повторит

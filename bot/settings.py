@@ -219,6 +219,7 @@ OPENROUTER_MODEL: str = _openrouter_cfg.get("model", "")
 OPENROUTER_API_URL: str = _openrouter_cfg.get("api_url", "https://openrouter.ai/api/v1")
 OPENROUTER_SITE_URL: str = _openrouter_cfg.get("site_url", "")
 OPENROUTER_APP_NAME: str = _openrouter_cfg.get("app_name", "SinusSMP Support Bot")
+OPENROUTER_USE_PROXY: bool = bool(_openrouter_cfg.get("use_proxy", True))
 
 _fallback_cfg = _ai_cfg.get("fallback")
 _fallback_cfg = _fallback_cfg if isinstance(_fallback_cfg, dict) else {}
@@ -247,7 +248,7 @@ else:
 
 PROXY_STRATEGY: str = str(_proxy_cfg.get("strategy", "failover")).strip().lower()
 PROXY_COOLDOWN_SECONDS: int = int(_proxy_cfg.get("cooldown_seconds", 60))
-DISCORD_USE_PROXY: bool = bool(_proxy_cfg.get("discord_use_proxy", True))
+DISCORD_USE_PROXY: bool = bool(_proxy_cfg.get("discord_use_proxy", False))
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 _paths_cfg = _section("paths")

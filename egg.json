@@ -399,6 +399,26 @@
             "field_type": "text"
         },
         {
+            "name": "Discord Use Proxy",
+            "description": "Пускать ли весь трафик самого Discord через прокси (true) или подключать Discord напрямую (false). По умолчанию false.",
+            "env_variable": "DISCORD_USE_PROXY",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "OpenRouter Use Proxy",
+            "description": "Пускать ли запросы к основному AI (OpenRouter) через прокси (true/false). По умолчанию true.",
+            "env_variable": "OPENROUTER_USE_PROXY",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:true,false",
+            "field_type": "text"
+        },
+        {
             "name": "Auto Update ChromaDB",
             "description": "Автоматически проверять и обновлять индекс базы знаний при запуске бота (true/false)",
             "env_variable": "AUTO_UPDATE_CHROMA_DB",
